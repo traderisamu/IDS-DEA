@@ -880,9 +880,25 @@ class DEAApp(tk.Tk):
 
         ttk.Label(form, text="Details:").grid(row=3, column=0, sticky="w", pady=4)
         details_var = tk.StringVar(value=details_val)
-        details_entry = ttk.Entry(form, textvariable=details_var, width=32)
+        details_entry = ttk.Combobox(form, textvariable=details_var, values=[], width=32)
         details_entry.grid(row=3, column=1, sticky="w", pady=4)
         details_numeric_vcmd = (win.register(self._validate_numeric_details), "%P")
+        # Same memory as the main window: this employee's own past Details
+        # phrasing, scoped to the JOB Code + Work Description currently in
+        # this dialog (not a restriction - still free-typeable, with the
+        # same typeahead popup as the main tab).
+        edit_details_history = {"items": []}
+
+        def refresh_edit_details(*_args):
+            edit_details_history["items"] = ds.get_employee_details_history(
+                self.shared_path, self.employee_name,
+                job_var.get().strip() or None, wd_var.get().strip() or None)
+            details_entry["values"] = edit_details_history["items"]
+
+        job_var.trace_add("write", refresh_edit_details)
+        wd_var.trace_add("write", refresh_edit_details)
+        refresh_edit_details()
+        enable_typeahead(details_entry, lambda: edit_details_history["items"])
         edit_tooltip_label = ttk.Label(form, text="", font=("Arial", 8, "italic"), foreground="#F57F17")
         edit_tooltip_label.grid(row=3, column=2, columnspan=2, sticky="w", padx=(6, 0))
 
