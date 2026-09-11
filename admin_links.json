@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Connection Ebook",
+    "type": "web",
+    "target": "http://192.168.0.118/ids-connection-ebook/dashboard"
+  },
+  {
+    "name": "AISC Steel Manual",
+    "type": "file",
+    "target": "\\\\EgnyteDrive\\idsinc\\Shared\\Engineering\\ENGG PHL\\REFERENCES\\AISC 15th Ed Manual & Specs\\AISC Steel Construction Manual, 15th Edition, First Printing Edition, 2017 (HIGH QUALITY VERSION).pdf"
+  }
+]
