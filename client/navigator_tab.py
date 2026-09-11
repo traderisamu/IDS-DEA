@@ -840,7 +840,10 @@ class Navigator(tk.Frame):
                 self._render_sections(sections)
             try:
                 self.after(0, paint)
-            except tk.TclError:
+            except Exception:
+                # App is shutting down (interpreter teardown raises
+                # RuntimeError, a destroyed widget raises TclError) -
+                # nothing left to paint into.
                 pass
 
         threading.Thread(target=work, daemon=True).start()
@@ -858,26 +861,15 @@ class Navigator(tk.Frame):
         width += 2
 
         row = 0
-        for title, items in sections:
-            if title:
-                toggle = ttk.Button(self.content, text="\u25BE  " + title, style="Toggle.TButton",
-                                    takefocus=0)
-                toggle.grid(row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(10, 0))
-                row += 1
-                frame = ttk.Frame(self.content, style="App.TFrame")
-                frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=2)
-                self._render_items(frame, items, width)
-                toggle.configure(command=lambda t=title, h=toggle, f=frame:
-                                 self._toggle_section(t, h, f))
-                if title in self._collapsed:
-                    frame.grid_remove()
-                    toggle.configure(text="\u25B8  " + title)
-                row += 1
-            else:
-                frame = ttk.Frame(self.content, style="App.TFrame")
-                frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=2)
-                self._render_items(frame, items, width)
-                row += 1
+        # Stage groups (CALCS / INITIAL / ...) render with NO title header -
+        # only QUICK LINKS keeps its collapsible title below. Each group
+        # still gets its own row-block so its buttons start on a fresh row.
+        for _title, items in sections:
+            frame = ttk.Frame(self.content, style="App.TFrame")
+            frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=2,
+                       pady=(10 if row else 0, 0))
+            self._render_items(frame, items, width)
+            row += 1
 
         all_links = get_admin_links() + self.settings.get("links", [])
         self._render_quick_links(width, row)

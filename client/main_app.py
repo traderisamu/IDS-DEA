@@ -491,7 +491,7 @@ class DEAApp(tk.Tk):
         self.notebook.add(self.tab_today, text="Log Today's Work")
         self.notebook.add(self.tab_calendar, text="My Calendar")
         self.notebook.add(self.tab_dashboard, text="My Dashboard")
-        self.notebook.add(self.tab_navigator, text="Job Navigator")
+        self.notebook.add(self.tab_navigator, text="\U0001F7E2 Job Navigator")
         self._dashboard_tab_obj = None
         self._navigator_tab_obj = None
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
