@@ -98,10 +98,17 @@ if errorlevel 1 (
 
 echo.
 echo [4/4] Publishing to dist\ and launching...
+REM The running exe locks its own file, so a rebuild cannot overwrite it
+REM while it (or a previous debug launch) is still open - stop any such
+REM instances first. This only touches IDS_DEA_Logger.exe test launches;
+REM shared-drive log data is never affected.
+taskkill /IM "%EXE_NAME%" /F >nul 2>&1
 if not exist "dist" mkdir "dist"
 copy /Y "%DIST_TMP%\%EXE_NAME%" "dist\%EXE_NAME%" >nul
-if not exist "dist\%EXE_NAME%" (
-    echo ERROR: built exe did not land in dist\. Check %DIST_TMP%.
+if errorlevel 1 (
+    echo ERROR: could not write dist\%EXE_NAME% - it is still locked by a
+    echo        running copy. Close every IDS_DEA_Logger window (check the
+    echo        system tray too), then re-run build.
     pause
     exit /b 1
 )
