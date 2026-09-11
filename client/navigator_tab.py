@@ -1116,7 +1116,7 @@ class Navigator(tk.Frame):
     def manage_links(self):
         win = tk.Toplevel(self)
         win.title("IDS Navigator - Quick Links")
-        win.geometry("620x420")
+        win.geometry("700x470")
         win.transient(self.winfo_toplevel())
         win.grab_set()
 
@@ -1240,14 +1240,16 @@ class Navigator(tk.Frame):
                 pass
 
         buttons = ttk.Frame(win)
-        buttons.pack(fill="x", padx=12, pady=(0, 12))
+        buttons.pack(fill="x", padx=12, pady=(0, 2))
         ttk.Button(buttons, text="+ Add Link", command=add_link).pack(side="left")
         ttk.Button(buttons, text="Rename", command=rename_link).pack(side="left", padx=6)
         ttk.Button(buttons, text="Delete", command=delete_link).pack(side="left")
         ttk.Button(buttons, text="\u25B2 Up", command=lambda: move_link(-1)).pack(side="left")
         ttk.Button(buttons, text="\u25BC Down", command=lambda: move_link(1)).pack(side="left", padx=6)
-        ttk.Button(buttons, text="Admin Links...", command=lambda: self._edit_admin_links(win)).pack(side="left", padx=6)
-        ttk.Button(buttons, text="Close", command=win.destroy).pack(side="right")
+        buttons2 = ttk.Frame(win)
+        buttons2.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(buttons2, text="Admin Links...", command=lambda: self._edit_admin_links(win)).pack(side="left")
+        ttk.Button(buttons2, text="Close", command=win.destroy).pack(side="right")
         reload_tree()
 
     def _edit_admin_links(self, parent=None):
@@ -1275,7 +1277,7 @@ class Navigator(tk.Frame):
         path = SHARED_ADMIN_LINKS
         win = tk.Toplevel(self)
         win.title("IDS Navigator - Admin Quick Links")
-        win.geometry("640x400")
+        win.geometry("700x450")
         win.transient(parent or self.winfo_toplevel())
         win.grab_set()
         links = [dict(l) for l in get_admin_links()]
@@ -1382,14 +1384,16 @@ class Navigator(tk.Frame):
         ttk.Label(win, textvariable=hint, foreground="#68727d",
                   font=("Segoe UI", 9)).pack(anchor="w", padx=12)
         btns = ttk.Frame(win)
-        btns.pack(fill="x", padx=12, pady=(0, 12))
+        btns.pack(fill="x", padx=12, pady=(0, 2))
         ttk.Button(btns, text="+ Add", command=add).pack(side="left")
         ttk.Button(btns, text="Rename", command=rename).pack(side="left", padx=6)
         ttk.Button(btns, text="Delete", command=delete).pack(side="left")
         ttk.Button(btns, text="\u25B2 Up", command=lambda: move(-1)).pack(side="left")
         ttk.Button(btns, text="\u25BC Down", command=lambda: move(1)).pack(side="left", padx=6)
-        ttk.Button(btns, text="Save", command=save).pack(side="right")
-        ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="right", padx=6)
+        btns2 = ttk.Frame(win)
+        btns2.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(btns2, text="Save", command=save).pack(side="right")
+        ttk.Button(btns2, text="Cancel", command=win.destroy).pack(side="right", padx=6)
         reload_tree()
 
 def resource_path(name):
