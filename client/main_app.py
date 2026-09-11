@@ -491,7 +491,16 @@ class DEAApp(tk.Tk):
         self.notebook.add(self.tab_today, text="Log Today's Work")
         self.notebook.add(self.tab_calendar, text="My Calendar")
         self.notebook.add(self.tab_dashboard, text="My Dashboard")
-        self.notebook.add(self.tab_navigator, text="Job Navigator")
+        # ttk cannot paint one tab's background, so the Job Navigator tab
+        # carries a crisp green-dot image (always visible, theme-proof)
+        # plus green title text while selected (see _paint_navigator_tab).
+        self._nav_tab_dot = tk.PhotoImage(width=12, height=12)
+        for _px in range(12):
+            for _py in range(12):
+                if (_px - 5.5) ** 2 + (_py - 5.5) ** 2 <= 25.0:
+                    self._nav_tab_dot.put("#2e7d32", (_px, _py))
+        self.notebook.add(self.tab_navigator, text="Job Navigator",
+                          image=self._nav_tab_dot, compound="left")
         self._dashboard_tab_obj = None
         self._navigator_tab_obj = None
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)

@@ -561,13 +561,24 @@ class Navigator(tk.Frame):
         ttk.Label(top, textvariable=self.path_var, style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(3, 0))
 
         actions = ttk.Frame(main, style="App.TFrame")
-        actions.grid(row=1, column=0, sticky="ew", pady=(14, 10))
+        actions.grid(row=1, column=0, sticky="ew", pady=(10, 4))
         ttk.Button(actions, text="Open Job", command=self.open_current_job).pack(side="left")
         ttk.Button(actions, text="Add to Favorites", command=self.add_favorite).pack(side="left", padx=6)
 
         self.status_var = tk.StringVar(value="")
         status = ttk.Label(main, textvariable=self.status_var, style="Sub.TLabel")
-        status.grid(row=2, column=0, sticky="w", pady=(0, 8))
+        status.grid(row=2, column=0, sticky="w", pady=(0, 4))
+
+        def _sync_status_row(*_args):
+            # The status line only takes up space while it has something to
+            # say - an empty message collapses the row entirely.
+            if self.status_var.get().strip():
+                status.grid()
+            else:
+                status.grid_remove()
+
+        self.status_var.trace_add("write", _sync_status_row)
+        _sync_status_row()
 
         # Scrollable content area: jobs with many sections are taller than
         # the window, and without this the bottom buttons (quick links)
@@ -870,15 +881,18 @@ class Navigator(tk.Frame):
         # titled header (see _render_quick_links). Each group still gets
         # its own row-block so its buttons start on a fresh row.
         for title, items in sections:
-            toggle = ttk.Button(self.content, text="\u25BE", style="Toggle.TButton",
-                                takefocus=0, width=3)
-            toggle.grid(row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(10, 0))
+            # Plain label, not a button: a button outline can never appear,
+            # and the hand cursor still says "click me". Still collapses.
+            toggle = tk.Label(self.content, text="\u25BE", font=("Segoe UI", 9),
+                              bg="#f5f6f8", fg="#555555", cursor="hand2")
+            toggle.grid(row=row, column=0, columnspan=3, sticky="w", padx=8,
+                        pady=(2 if row == 0 else 10, 0))
             row += 1
             frame = ttk.Frame(self.content, style="App.TFrame")
             frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=2)
             self._render_items(frame, items, width)
-            toggle.configure(command=lambda t=title, h=toggle, f=frame:
-                             self._toggle_section(t, h, f, ""))
+            toggle.bind("<Button-1>", lambda e, t=title, h=toggle, f=frame:
+                        self._toggle_section(t, h, f, ""))
             if title in self._collapsed:
                 frame.grid_remove()
                 toggle.configure(text="\u25B8")
@@ -891,8 +905,9 @@ class Navigator(tk.Frame):
         """Quick-links card block with its own collapse toggle. Shown under a
         selected job and on the empty (no-job-selected) screen."""
         all_links = get_admin_links() + self.settings.get("links", [])
-        links_toggle = ttk.Button(self.content, text="\u25BE  QUICK LINKS", style="Toggle.TButton",
-                                  takefocus=0)
+        links_toggle = tk.Label(self.content, text="\u25BE  QUICK LINKS",
+                                font=("Segoe UI", 9, "bold"),
+                                bg="#f5f6f8", fg="#20252b", cursor="hand2")
         links_toggle.grid(row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(14, 0))
         row += 1
         links_frame = ttk.Frame(self.content, style="App.TFrame")
@@ -906,8 +921,8 @@ class Navigator(tk.Frame):
         links_frame.grid_columnconfigure(0, weight=1, uniform="btn")
         links_frame.grid_columnconfigure(1, weight=1, uniform="btn")
         links_frame.grid_columnconfigure(2, weight=1, uniform="btn")
-        links_toggle.configure(command=lambda h=links_toggle, f=links_frame:
-                               self._toggle_section("QUICK LINKS", h, f, "QUICK LINKS"))
+        links_toggle.bind("<Button-1>", lambda e, h=links_toggle, f=links_frame:
+                            self._toggle_section("QUICK LINKS", h, f, "QUICK LINKS"))
         if "QUICK LINKS" in self._collapsed:
             links_frame.grid_remove()
             links_toggle.configure(text="\u25B8  QUICK LINKS")
