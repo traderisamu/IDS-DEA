@@ -107,8 +107,8 @@ if not exist "dist" mkdir "dist"
 copy /Y "%DIST_TMP%\%EXE_NAME%" "dist\%EXE_NAME%" >nul
 if errorlevel 1 (
     echo ERROR: could not write dist\%EXE_NAME% - it is still locked by a
-    echo        running copy. Close every IDS_DEA_Logger window (check the
-    echo        system tray too), then re-run build.
+    echo        running copy. Close every IDS_DEA_Logger window including
+    echo        its system tray icon, then re-run build.
     pause
     exit /b 1
 )
