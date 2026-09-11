@@ -619,6 +619,7 @@ class DEAApp(tk.Tk):
         self.tree.bind("<Double-1>", self._edit_selected_entry)
         self.tree.bind("<Delete>", self._delete_selected_entry)
         self.tree.bind("<BackSpace>", self._delete_selected_entry)
+        self.tree.bind("<Button-3>", self._tree_context_menu)
         scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
         scroll.pack(side="right", fill="y")
         self.tree.configure(yscrollcommand=scroll.set)
@@ -956,6 +957,81 @@ class DEAApp(tk.Tk):
         btn_row.grid(row=5, column=0, columnspan=2, pady=(14, 0))
         ttk.Button(btn_row, text="Save Changes", command=save).pack(side="left", padx=4)
         ttk.Button(btn_row, text="Cancel", command=win.destroy).pack(side="left", padx=4)
+
+    def _tree_context_menu(self, event):
+        """Right-click menu on an entry row: Edit / Duplicate / Copy as
+        Text / Delete. Right-click selects the row under the pointer
+        first; a click on empty space shows nothing."""
+        row_id = self.tree.identify_row(event.y)
+        if not row_id:
+            return
+        self.tree.selection_set(row_id)
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Edit Entry", command=self._edit_selected_entry)
+        menu.add_command(label="Duplicate Entry", command=self._duplicate_selected_entry)
+        menu.add_command(label="Copy as Text", command=self._copy_selected_entry_text)
+        menu.add_separator()
+        menu.add_command(label="Delete Entry", command=self._delete_selected_entry)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _selected_entry_values(self):
+        """(excel_row, job, workdesc, hours, details, remarks) for the
+        currently selected tree row, or None when nothing is selected."""
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        try:
+            excel_row = int(self.tree.item(sel[0], "tags")[0])
+        except (IndexError, ValueError, TypeError):
+            return None
+        values = self.tree.item(sel[0], "values")
+        if len(values) != 5:
+            return None
+        return (excel_row,) + tuple(values)
+
+    def _duplicate_selected_entry(self, _event=None):
+        """Adds an exact copy of the selected entry to the same date -
+        handy for repeating a similar line without retyping it. The copy
+        lands as a brand-new row, so editing or deleting one never
+        touches the other."""
+        the_date = self._selected_date()
+        if not the_date:
+            return
+        got = self._selected_entry_values()
+        if not got:
+            return
+        _excel_row, job, workdesc, hours, details, remarks = got
+        try:
+            hours_val = float(hours)
+            if hours_val <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            messagebox.showwarning("Invalid Hours", "The selected entry has no usable hours value.")
+            return
+        try:
+            ds.add_log_entry(self.shared_path, self.employee_name, the_date,
+                              job, workdesc, hours_val, details, remarks)
+        except ds.FileLockedError as e:
+            messagebox.showerror("File Locked", str(e))
+            return
+        self._refresh_suggestions()
+        self._refresh_today_tab()
+
+    def _copy_selected_entry_text(self, _event=None):
+        """Copies the selected entry to the clipboard as one tab-separated
+        line (JOB / Work Description / Hours / Details / Remarks) - ready
+        to paste straight into Excel or the timesheet portal."""
+        got = self._selected_entry_values()
+        if not got:
+            return
+        _excel_row, job, workdesc, hours, details, remarks = got
+        text = "\t".join(str(v) for v in (job, workdesc, hours, details, remarks))
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.status_label.config(text="Entry copied to clipboard.")
 
     def _delete_selected_entry(self, _event=None):
         sel = self.tree.selection()
