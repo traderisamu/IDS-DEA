@@ -1117,18 +1117,27 @@ class Navigator(tk.Frame):
         win = tk.Toplevel(self)
         win.title("IDS Navigator - Quick Links")
         win.geometry("700x470")
+        win.minsize(620, 400)
         win.transient(self.winfo_toplevel())
         win.grab_set()
 
-        tree = ttk.Treeview(win, columns=("type", "target"), show="tree headings",
+        tree_frame = ttk.Frame(win)
+        tree_frame.pack(fill="both", expand=True, padx=12, pady=(12, 4))
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+        tree = ttk.Treeview(tree_frame, columns=("type", "target"), show="tree headings",
                                style="Nav.Treeview")
         tree.heading("#0", text="Name")
         tree.heading("type", text="Type")
         tree.heading("target", text="Target")
-        tree.column("#0", width=180)
-        tree.column("type", width=70)
-        tree.column("target", width=300)
-        tree.pack(fill="both", expand=True, padx=12, pady=(12, 4))
+        for _col, _w in (("#0", 180), ("type", 70), ("target", 340)):
+            tree.column(_col, width=_w, stretch=False)
+        tree_vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        tree_hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=tree_vsb.set, xscrollcommand=tree_hsb.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        tree_vsb.grid(row=0, column=1, sticky="ns")
+        tree_hsb.grid(row=1, column=0, sticky="ew")
         tree.bind("<Double-Button-1>", lambda e: rename_link())
 
         hint = tk.StringVar(value="")
@@ -1278,19 +1287,28 @@ class Navigator(tk.Frame):
         win = tk.Toplevel(self)
         win.title("IDS Navigator - Admin Quick Links")
         win.geometry("700x450")
+        win.minsize(620, 400)
         win.transient(parent or self.winfo_toplevel())
         win.grab_set()
         links = [dict(l) for l in get_admin_links()]
 
-        tree = ttk.Treeview(win, columns=("type", "target"), show="tree headings",
+        tree_frame = ttk.Frame(win)
+        tree_frame.pack(fill="both", expand=True, padx=12, pady=(12, 4))
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+        tree = ttk.Treeview(tree_frame, columns=("type", "target"), show="tree headings",
                                style="Nav.Treeview")
         tree.heading("#0", text="Name")
         tree.heading("type", text="Type")
         tree.heading("target", text="Target")
-        tree.column("#0", width=200)
-        tree.column("type", width=70)
-        tree.column("target", width=320)
-        tree.pack(fill="both", expand=True, padx=12, pady=(12, 4))
+        for _col, _w in (("#0", 200), ("type", 70), ("target", 340)):
+            tree.column(_col, width=_w, stretch=False)
+        tree_vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        tree_hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=tree_vsb.set, xscrollcommand=tree_hsb.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        tree_vsb.grid(row=0, column=1, sticky="ns")
+        tree_hsb.grid(row=1, column=0, sticky="ew")
         tree.bind("<Double-Button-1>", lambda e: rename())
 
         def reload_tree():
