@@ -465,11 +465,13 @@ class Navigator(tk.Frame):
         self._prewarm()
 
     def _build_style(self):
+        # NOTE: ttk styles (and especially theme_use) are application-global.
+        # This tab must NEVER call theme_use() or restyle stock selectors
+        # ("Treeview", "TButton", ...) - doing so repainted the whole DEA
+        # window in clam's gray/brown. Every selector below is Nav-prefixed
+        # so only widgets inside this tab are affected; DEA keeps its
+        # initial native look.
         style = ttk.Style(self)
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
         style.configure("App.TFrame", background="#f5f6f8")
         style.configure("Sidebar.TFrame", background="#20252b")
         style.configure("Sidebar.TLabel", background="#20252b", foreground="#e8edf2")
@@ -492,9 +494,9 @@ class Navigator(tk.Frame):
         style.configure("Toggle.TButton", font=("Segoe UI", 9), padding=(4, 2),
                         borderwidth=0, relief="flat", background="#f5f6f8")
         style.map("Toggle.TButton", background=[("active", "#e6e8ec")])
-        style.configure("Treeview", rowheight=28, font=("Segoe UI", 9),
+        style.configure("Nav.Treeview", rowheight=28, font=("Segoe UI", 9),
                         background="#ffffff", fieldbackground="#ffffff")
-        style.configure("Treeview.Heading", font=("Segoe UI", 9, "bold"))
+        style.configure("Nav.Treeview.Heading", font=("Segoe UI", 9, "bold"))
 
     def _build_ui(self):
         self.configure(bg="#f5f6f8")
@@ -567,12 +569,33 @@ class Navigator(tk.Frame):
         status = ttk.Label(main, textvariable=self.status_var, style="Sub.TLabel")
         status.grid(row=2, column=0, sticky="w", pady=(0, 8))
 
-        self.content = ttk.Frame(main, style="App.TFrame")
-        self.content.grid(row=3, column=0, sticky="nsew")
+        # Scrollable content area: jobs with many sections are taller than
+        # the window, and without this the bottom buttons (quick links)
+        # could sit below the visible area with no way to reach them.
+        # self.content keeps its name/role (the inner frame everything
+        # renders into) so no render code changes.
+        content_wrap = ttk.Frame(main, style="App.TFrame")
+        content_wrap.grid(row=3, column=0, sticky="nsew")
+        content_wrap.grid_columnconfigure(0, weight=1)
+        content_wrap.grid_rowconfigure(0, weight=1)
+        self._content_canvas = tk.Canvas(content_wrap, background="#f5f6f8",
+                                         highlightthickness=0)
+        content_vsb = ttk.Scrollbar(content_wrap, orient="vertical",
+                                    command=self._content_canvas.yview)
+        self.content = ttk.Frame(self._content_canvas, style="App.TFrame")
+        self._content_canvas.create_window((0, 0), window=self.content, anchor="nw")
+        self._content_canvas.configure(yscrollcommand=content_vsb.set)
+        self._content_canvas.grid(row=0, column=0, sticky="nsew")
+        content_vsb.grid(row=0, column=1, sticky="ns")
         self.content.grid_columnconfigure(0, weight=1, uniform="btn")
         self.content.grid_columnconfigure(1, weight=1, uniform="btn")
         self.content.grid_columnconfigure(2, weight=1, uniform="btn")
         self.content.grid_rowconfigure(99, weight=1)
+        self.content.bind("<Configure>",
+                          lambda e: self._content_canvas.configure(
+                              scrollregion=self._content_canvas.bbox("all")))
+        self._content_canvas.bind("<Configure>", self._fit_content_width)
+        self._content_canvas.bind_all("<MouseWheel>", self._scroll_content_wheel, add="+")
 
         self._show_placeholder()
 
@@ -658,6 +681,42 @@ class Navigator(tk.Frame):
     def _clear_content(self):
         for w in self.content.winfo_children():
             w.destroy()
+        try:
+            self._content_canvas.yview_moveto(0.0)
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _fit_content_width(self, _event=None):
+        """Keep the inner content frame as wide as the canvas so the
+        3-column button grid always fills the visible width."""
+        try:
+            width = self._content_canvas.winfo_width()
+            for item in self._content_canvas.find_all():
+                self._content_canvas.itemconfigure(item, width=width)
+        except tk.TclError:
+            pass
+
+    def _scroll_content_wheel(self, event):
+        """Mouse-wheel scrolling for the content area. Bound app-wide
+        (bind_all) but only acts when the pointer is actually over this
+        tab's content, so it never hijacks scrolling in DEA's other tabs
+        or dialogs."""
+        try:
+            widget = self.winfo_containing(event.x_root, event.y_root)
+        except tk.TclError:
+            return
+        node = widget
+        try:
+            while node is not None and node is not self._content_canvas and node is not self.content:
+                node = node.master
+        except tk.TclError:
+            return
+        if node is None:
+            return
+        try:
+            self._content_canvas.yview_scroll(-1 * (event.delta // 120), "units")
+        except tk.TclError:
+            pass
 
     def _show_placeholder(self, text="Select a job from the left."):
         self._clear_content()
@@ -1061,7 +1120,8 @@ class Navigator(tk.Frame):
         win.transient(self.winfo_toplevel())
         win.grab_set()
 
-        tree = ttk.Treeview(win, columns=("type", "target"), show="tree headings")
+        tree = ttk.Treeview(win, columns=("type", "target"), show="tree headings",
+                               style="Nav.Treeview")
         tree.heading("#0", text="Name")
         tree.heading("type", text="Type")
         tree.heading("target", text="Target")
@@ -1220,7 +1280,8 @@ class Navigator(tk.Frame):
         win.grab_set()
         links = [dict(l) for l in get_admin_links()]
 
-        tree = ttk.Treeview(win, columns=("type", "target"), show="tree headings")
+        tree = ttk.Treeview(win, columns=("type", "target"), show="tree headings",
+                               style="Nav.Treeview")
         tree.heading("#0", text="Name")
         tree.heading("type", text="Type")
         tree.heading("target", text="Target")

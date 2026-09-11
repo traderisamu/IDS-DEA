@@ -495,6 +495,11 @@ class DEAApp(tk.Tk):
         self._dashboard_tab_obj = None
         self._navigator_tab_obj = None
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+        # Ctrl+Tab / Ctrl+Shift+Tab cycle the tabs (Log Today's Work /
+        # My Calendar / My Dashboard / Job Navigator) from anywhere in the
+        # main window - one binding sniffs Shift for direction. Returning
+        # "break" stops the keypress dead so focus never jumps elsewhere.
+        self.bind("<Control-Tab>", self._cycle_notebook_tab)
 
         self._build_today_tab()
         self._build_calendar_tab()
@@ -1132,7 +1137,7 @@ class DEAApp(tk.Tk):
 
         win = tk.Toplevel(self)
         win.title("Customize Standard Times")
-        win.geometry("380x360")
+        win.geometry("400x430")
         win.grab_set()
         win.transient(self)
 
@@ -1188,6 +1193,16 @@ class DEAApp(tk.Tk):
         ttk.Button(btn_row, text="Reset to Default", command=do_reset).pack(side="left", padx=4)
         ttk.Button(btn_row, text="Cancel", command=win.destroy).pack(side="left", padx=4)
         win.bind("<Return>", lambda e: do_save())
+
+    @staticmethod
+    def _fmt_h(hours):
+        """Hours capped at 2 decimals with trailing zeros stripped, so the
+        customize readout shows "8h" / "9.5h" / "7.97h" - never a long
+        float tail like 7.9666667h from an odd start time."""
+        text = f"{hours:.2f}"
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return f"{text}h"
 
     @staticmethod
     def _format_12h(moment):
@@ -1252,15 +1267,15 @@ class DEAApp(tk.Tk):
         _ti, _lo, _li, log_out = self._standard_times()
         need = self._hours_for_logout(log_out)
         delta = need - total
+        hit_at = self._format_12h(dt.datetime.combine(the_date, log_out))
         if abs(delta) < 0.005:
-            need_text = (f"To hit {self._format_12h(dt.datetime.combine(the_date, log_out))}: "
-                         f"need {need:g}h total - exactly there.")
+            need_text = (f"To hit {hit_at}: need {self._fmt_h(need)} total - exactly there.")
         elif delta > 0:
-            need_text = (f"To hit {self._format_12h(dt.datetime.combine(the_date, log_out))}: "
-                         f"need {need:g}h total (+{delta:g}h more).")
+            need_text = (f"To hit {hit_at}: need {self._fmt_h(need)} total "
+                         f"(+{self._fmt_h(delta)} more).")
         else:
-            need_text = (f"To hit {self._format_12h(dt.datetime.combine(the_date, log_out))}: "
-                         f"need {need:g}h total ({-delta:g}h over).")
+            need_text = (f"To hit {hit_at}: need {self._fmt_h(need)} total "
+                         f"({self._fmt_h(-delta)} over).")
         self.logout_need_label.config(text=need_text)
         self.range_totals_label.config(text=self._range_totals_text(the_date))
 
@@ -1297,6 +1312,27 @@ class DEAApp(tk.Tk):
         self.my_calendar = MonthCalendar(frame, provider, on_click)
         self.my_calendar.pack(fill="both", expand=True)
         legend_frame(frame).pack(anchor="w", pady=(6, 0))
+
+    def _cycle_notebook_tab(self, event=None):
+        """Ctrl+Tab handler: select the next tab (previous with Shift held).
+        Works from any widget in the main window; safe to call when the
+        notebook doesn't exist yet (locked / no-name screens)."""
+        try:
+            tabs = list(self.notebook.tabs())
+        except (tk.TclError, AttributeError):
+            return "break"
+        if not tabs:
+            return "break"
+        try:
+            cur = tabs.index(self.notebook.select())
+        except (tk.TclError, ValueError):
+            cur = 0
+        step = -1 if (event is not None and getattr(event, "state", 0) & 0x1) else 1
+        try:
+            self.notebook.select(tabs[(cur + step) % len(tabs)])
+        except tk.TclError:
+            pass
+        return "break"
 
     def _on_tab_changed(self, _event=None):
         # Built lazily, on first view, rather than at startup - matplotlib's

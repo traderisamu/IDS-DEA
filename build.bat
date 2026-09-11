@@ -52,9 +52,9 @@ if exist "%BUILD_TMP%" rmdir /S /Q "%BUILD_TMP%"
 if exist "%DIST_TMP%" rmdir /S /Q "%DIST_TMP%"
 "%VENV_PY%" -m PyInstaller --noconfirm --clean --onefile --windowed ^
     --name "IDS_DEA_Logger" ^
-    --icon "assets\icon.ico" ^
-    --add-data "assets\icon.ico;assets" ^
-    --add-data "admin_links.json;." ^
+    --icon "%~dp0assets\icon.ico" ^
+    --add-data "%~dp0assets\icon.ico;assets" ^
+    --add-data "%~dp0admin_links.json;." ^
     --workpath "%BUILD_TMP%" ^
     --distpath "%DIST_TMP%" ^
     --specpath "%BUILD_TMP%" ^
