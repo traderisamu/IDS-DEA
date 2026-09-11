@@ -491,7 +491,7 @@ class DEAApp(tk.Tk):
         self.notebook.add(self.tab_today, text="Log Today's Work")
         self.notebook.add(self.tab_calendar, text="My Calendar")
         self.notebook.add(self.tab_dashboard, text="My Dashboard")
-        self.notebook.add(self.tab_navigator, text="\U0001F7E2 Job Navigator")
+        self.notebook.add(self.tab_navigator, text="Job Navigator")
         self._dashboard_tab_obj = None
         self._navigator_tab_obj = None
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
@@ -1426,6 +1426,19 @@ class DEAApp(tk.Tk):
             pass
         return "break"
 
+    def _paint_navigator_tab(self, active):
+        """Green title text for the Job Navigator tab while it is the
+        selected tab. ttk offers no per-tab colors, and the native Windows
+        theme ignores tab background mapping entirely - but the selected
+        state's foreground mapping does apply, so the title text itself
+        goes green only while this tab is current. Cleared the moment you
+        leave, so no other tab is ever affected."""
+        try:
+            ttk.Style(self).map("TNotebook.Tab",
+                                foreground=[("selected", "#1B5E20")] if active else [])
+        except tk.TclError:
+            pass
+
     def _on_tab_changed(self, _event=None):
         # Built lazily, on first view, rather than at startup - matplotlib's
         # import is noticeably slow, so this defers that cost to only the
@@ -1443,6 +1456,9 @@ class DEAApp(tk.Tk):
             from client.navigator_tab import Navigator
             self._navigator_tab_obj = Navigator(self.tab_navigator)
             self._navigator_tab_obj.pack(fill="both", expand=True)
+        # Green title text while the Job Navigator tab is current (see
+        # _paint_navigator_tab) - cleared on every other tab.
+        self._paint_navigator_tab(self.notebook.select() == str(self.tab_navigator))
 
     # ------------------------------------------------------------------
     # Admin

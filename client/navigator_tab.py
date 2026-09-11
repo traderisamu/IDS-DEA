@@ -775,15 +775,19 @@ class Navigator(tk.Frame):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _toggle_section(self, title, header, frame):
+    def _toggle_section(self, key, header, frame, label):
+        """Collapse/expand a section. `key` tracks the state in _collapsed;
+        `label` is the text shown next to the arrow ("" for the untitled
+        stage groups, "QUICK LINKS" for the links block)."""
+        suffix = "  " + label if label else ""
         if frame.winfo_ismapped():
             frame.grid_remove()
-            header.configure(text="\u25B8  " + title)
-            self._collapsed.add(title)
+            header.configure(text="\u25B8" + suffix)
+            self._collapsed.add(key)
         else:
             frame.grid()
-            header.configure(text="\u25BE  " + title)
-            self._collapsed.discard(title)
+            header.configure(text="\u25BE" + suffix)
+            self._collapsed.discard(key)
 
     def _show_job(self):
         """Synchronous render from cache (or a fast local build). Used by
@@ -861,14 +865,23 @@ class Navigator(tk.Frame):
         width += 2
 
         row = 0
-        # Stage groups (CALCS / INITIAL / ...) render with NO title header -
-        # only QUICK LINKS keeps its collapsible title below. Each group
-        # still gets its own row-block so its buttons start on a fresh row.
-        for _title, items in sections:
+        # Stage groups keep their collapsible arrow-toggle, but the toggle
+        # shows ONLY the arrow - no title text. Only QUICK LINKS keeps a
+        # titled header (see _render_quick_links). Each group still gets
+        # its own row-block so its buttons start on a fresh row.
+        for title, items in sections:
+            toggle = ttk.Button(self.content, text="\u25BE", style="Toggle.TButton",
+                                takefocus=0, width=3)
+            toggle.grid(row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(10, 0))
+            row += 1
             frame = ttk.Frame(self.content, style="App.TFrame")
-            frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=2,
-                       pady=(10 if row else 0, 0))
+            frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=2)
             self._render_items(frame, items, width)
+            toggle.configure(command=lambda t=title, h=toggle, f=frame:
+                             self._toggle_section(t, h, f, ""))
+            if title in self._collapsed:
+                frame.grid_remove()
+                toggle.configure(text="\u25B8")
             row += 1
 
         all_links = get_admin_links() + self.settings.get("links", [])
@@ -894,7 +907,7 @@ class Navigator(tk.Frame):
         links_frame.grid_columnconfigure(1, weight=1, uniform="btn")
         links_frame.grid_columnconfigure(2, weight=1, uniform="btn")
         links_toggle.configure(command=lambda h=links_toggle, f=links_frame:
-                               self._toggle_section("QUICK LINKS", h, f))
+                               self._toggle_section("QUICK LINKS", h, f, "QUICK LINKS"))
         if "QUICK LINKS" in self._collapsed:
             links_frame.grid_remove()
             links_toggle.configure(text="\u25B8  QUICK LINKS")
