@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -116,6 +116,10 @@ def build_job_sections(job_name):
         else:
             initial.append({"kind": "button", "label": "IER", "icon": "\U0001F50E",
                             "rel": ier_root, "menu": None})
+    schemes = sc("SCHEMES")
+    if _exists(base, schemes):
+        initial.append({"kind": "button", "label": "SCHEMES", "icon": "\U0001F4D0",
+                        "rel": schemes, "menu": None})
     rfi = sc("RFI")
     if _exists(base, rfi):
         menu = []
@@ -458,6 +462,7 @@ class Navigator(tk.Frame):
         self._hover_menus = []
         self._job_token = 0  # guards async renders against rapid re-clicks
         self._select_after_id = None  # debounce for arrow-key scrolling
+        self._gen_files = []  # file link generator entries [(name, unc)]
         self._build_style()
         self._build_ui()
         self.refresh_jobs()
@@ -736,7 +741,8 @@ class Navigator(tk.Frame):
         # No job selected: the job area is empty, so show the quick links here.
         all_links = get_admin_links() + self.settings.get("links", [])
         width = max([len(l["name"]) + 3 for l in all_links] + [1]) + 2
-        self._render_quick_links(width, 1)
+        row = self._render_quick_links(width, 1)
+        self._render_link_generator(width, row)
 
     # ---------- main content ----------
 
@@ -899,7 +905,8 @@ class Navigator(tk.Frame):
             row += 1
 
         all_links = get_admin_links() + self.settings.get("links", [])
-        self._render_quick_links(width, row)
+        row = self._render_quick_links(width, row)
+        self._render_link_generator(width, row)
 
     def _render_quick_links(self, width, row):
         """Quick-links card block with its own collapse toggle. Shown under a
@@ -926,6 +933,143 @@ class Navigator(tk.Frame):
         if "QUICK LINKS" in self._collapsed:
             links_frame.grid_remove()
             links_toggle.configure(text="\u25B8  QUICK LINKS")
+        return row + 1
+
+    def _render_link_generator(self, width, row):
+        """FILE LINK GENERATOR block: drop files/folders here (multi-select
+        OK) - or Add them via buttons - and get share-ready UNC links with
+        per-row double-click copy, Copy All, and Clear."""
+        toggle = tk.Label(self.content, text="\u25BE  FILE LINK GENERATOR",
+                                font=("Segoe UI", 9, "bold"),
+                                bg="#f5f6f8", fg="#20252b", cursor="hand2")
+        toggle.grid(row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(14, 0))
+        row += 1
+        gen_frame = ttk.Frame(self.content, style="App.TFrame")
+        gen_frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=2)
+        gen_frame.grid_columnconfigure(0, weight=1)
+
+        drop = tk.Label(gen_frame, text="Drop files / folders here (multi-select OK)",
+                        font=("Segoe UI", 10), bg="#ffffff", fg="#68727d",
+                        relief="groove", borderwidth=2, height=2)
+        drop.pack(fill="x", padx=5, pady=(5, 2))
+
+        btn_row = ttk.Frame(gen_frame, style="App.TFrame")
+        btn_row.pack(fill="x", padx=5, pady=2)
+        ttk.Button(btn_row, text="Add Files...", command=self._gen_pick_files).pack(side="left")
+        ttk.Button(btn_row, text="Add Folder...", command=self._gen_pick_folder).pack(side="left", padx=6)
+        ttk.Button(btn_row, text="Copy All", command=self._gen_copy_all).pack(side="left")
+        ttk.Button(btn_row, text="Clear", command=self._gen_clear).pack(side="right")
+
+        tree = ttk.Treeview(gen_frame, columns=("unc",), show="tree headings",
+                            style="Nav.Treeview", height=5)
+        tree.heading("#0", text="Name")
+        tree.heading("unc", text="UNC Path")
+        tree.column("#0", width=200, stretch=False)
+        tree.column("unc", width=420, stretch=False)
+        tree_vsb = ttk.Scrollbar(gen_frame, orient="vertical", command=tree.yview)
+        tree_hsb = ttk.Scrollbar(gen_frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=tree_vsb.set, xscrollcommand=tree_hsb.set)
+        tree_vsb.pack(side="right", fill="y", padx=(0, 5))
+        tree_hsb.pack(side="bottom", fill="x", padx=5)
+        tree.pack(fill="x", padx=5, pady=2)
+        tree.bind("<Double-Button-1>", lambda e: self._gen_copy_selected())
+        self._gen_tree = tree
+
+        hint_text = ("Drag-and-drop is unavailable here - use Add Files / Add Folder."
+                     if not HAS_DND else "Tip: double-click a row to copy its link.")
+        self._gen_hint = tk.StringVar(value=hint_text)
+        ttk.Label(gen_frame, textvariable=self._gen_hint, style="Sub.TLabel",
+                  font=("Segoe UI", 8)).pack(anchor="w", padx=5, pady=(0, 5))
+
+        if HAS_DND:
+            try:
+                for target in (drop, tree):
+                    target.drop_target_register(DND_FILES)
+                    target.dnd_bind("<<Drop>>", lambda e: self._gen_add_dropped(e.data))
+            except Exception:
+                pass
+        toggle.bind("<Button-1>", lambda e, h=toggle, f=gen_frame:
+                    self._toggle_section("FILE LINK GENERATOR", h, f, "FILE LINK GENERATOR"))
+        if "FILE LINK GENERATOR" in self._collapsed:
+            gen_frame.grid_remove()
+            toggle.configure(text="\u25B8  FILE LINK GENERATOR")
+        self._refresh_gen_tree()
+        return row + 1
+
+    def _gen_pick_files(self):
+        paths = filedialog.askopenfilenames(parent=self.winfo_toplevel(), title="Add files")
+        if paths:
+            self._gen_add_paths(list(paths))
+
+    def _gen_pick_folder(self):
+        path = filedialog.askdirectory(parent=self.winfo_toplevel(), title="Add folder")
+        if path:
+            self._gen_add_paths([path])
+
+    def _gen_add_dropped(self, data):
+        self._gen_add_paths(parse_drop_paths(data))
+
+    def _gen_add_paths(self, raw_paths):
+        added = 0
+        for raw in raw_paths:
+            unc = to_unc(raw)
+            if not unc:
+                continue
+            if any(u == unc for _, u in self._gen_files):
+                continue
+            name = os.path.basename(unc.rstrip("\\")) or unc
+            self._gen_files.append((name, unc))
+            added += 1
+        self._refresh_gen_tree()
+        total = len(self._gen_files)
+        if added:
+            self._gen_hint.set(
+                f"{total} file(s) ready - double-click a row or Copy All to grab links.")
+        elif raw_paths:
+            self._gen_hint.set("Those are already in the list.")
+
+    def _refresh_gen_tree(self):
+        tree = getattr(self, "_gen_tree", None)
+        if tree is None:
+            return
+        try:
+            for x in tree.get_children():
+                tree.delete(x)
+            for name, unc in self._gen_files:
+                tree.insert("", "end", text=name, values=(unc,))
+        except tk.TclError:
+            pass
+
+    def _gen_selected_unc(self):
+        tree = getattr(self, "_gen_tree", None)
+        if tree is None:
+            return None
+        sel = tree.selection()
+        if not sel:
+            return None
+        vals = tree.item(sel[0], "values")
+        return vals[0] if vals else None
+
+    def _gen_copy_selected(self):
+        unc = self._gen_selected_unc()
+        if not unc:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(unc)
+        self._gen_hint.set(f"Copied: {unc}")
+
+    def _gen_copy_all(self):
+        if not self._gen_files:
+            self._gen_hint.set("Nothing to copy yet - drop or add files first.")
+            return
+        self.clipboard_clear()
+        self.clipboard_append("\n".join(u for _, u in self._gen_files))
+        self._gen_hint.set(f"Copied {len(self._gen_files)} link(s).")
+
+    def _gen_clear(self):
+        self._gen_files = []
+        self._refresh_gen_tree()
+        self._gen_hint.set("Cleared.")
 
     def _render_items(self, frame, items, width):
         for i, it in enumerate(items):

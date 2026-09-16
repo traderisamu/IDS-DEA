@@ -264,10 +264,12 @@ Hours, and Remarks, then **Add Entry**.
   7:30/12-1 default on any other PC. The app's default window size is
   tall enough to show all of this without resizing.
 
-**My Calendar tab** — month view of your own logging history. Click any
-day to jump back to that date's entries.
+**🟢 Job Navigator tab** (2nd tab) — job folder shortcuts, quick links,
+and a file link generator (drop files to get share-ready UNC links).
 
-**My Dashboard tab** — a personal efficiency view, built to help each
+**My Calendar & Dashboard tab** — one scrolling page: month view of your
+own logging history on top (click any day to jump back to that date's
+entries), with the personal efficiency view below, built to help each
 person understand their own work pattern, not to be watched by anyone
 else:
 - **Where my time goes** — two bar charts, hours by Work Description and

@@ -45,6 +45,14 @@ class DEAApp(tk.Tk):
     def __init__(self):
         super().__init__()
         ensure_autostart()
+        # Native drag-and-drop for this interpreter (Quick Links / Admin
+        # Links / file link generator drop zones). Optional: without the
+        # package everything still runs, just without DnD.
+        try:
+            from tkinterdnd2 import TkinterDnD
+            TkinterDnD._require(self)
+        except Exception:
+            pass
         self.title(f"{C.APP_TITLE}  (v{C.APP_VERSION})")
         self.geometry("920x760")
         self.minsize(860, 700)
@@ -91,23 +99,25 @@ class DEAApp(tk.Tk):
         ensure_desktop_shortcut()
         self._start_hotkey()
 
+        # Always open the main window on launch - manual or auto-started
+        # at login. The tray icon keeps running underneath for reminders
+        # and quick re-open; closing the window (X) still hides to tray.
+        self.deiconify()
+        self.lift()
+        self.focus_force()
         if tray_started:
-            self.withdraw()
             if self.employee_name:
                 self.tray.notify(
                     C.APP_TITLE,
-                    f"Running in the background. Click the tray icon, or press "
-                    f"{HOTKEY_LABEL}, anytime to log your work."
+                    f"Click the tray icon, or press "
+                    f"{HOTKEY_LABEL}, anytime to pop this window open."
                 )
             else:
                 self.tray.notify(
                     C.APP_TITLE,
-                    f"Running in the background - no name selected yet. Click the "
+                    f"No name selected yet. Click the "
                     f"tray icon, or press {HOTKEY_LABEL}, to pick one."
                 )
-        else:
-            self.deiconify()
-            self.lift()
 
     # ------------------------------------------------------------------
     # Config resolution
@@ -485,12 +495,9 @@ class DEAApp(tk.Tk):
         self.notebook.pack(fill="both", expand=True, padx=8, pady=8)
 
         self.tab_today = ttk.Frame(self.notebook)
-        self.tab_calendar = ttk.Frame(self.notebook)
-        self.tab_dashboard = ttk.Frame(self.notebook)
+        self.tab_overview = ttk.Frame(self.notebook)
         self.tab_navigator = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_today, text="Log Today's Work")
-        self.notebook.add(self.tab_calendar, text="My Calendar")
-        self.notebook.add(self.tab_dashboard, text="My Dashboard")
         # ttk cannot paint one tab's background, so the Job Navigator tab
         # carries a crisp green-dot image (always visible, theme-proof)
         # plus green title text while selected (see _paint_navigator_tab).
@@ -501,17 +508,18 @@ class DEAApp(tk.Tk):
                     self._nav_tab_dot.put("#2e7d32", (_px, _py))
         self.notebook.add(self.tab_navigator, text="Job Navigator",
                           image=self._nav_tab_dot, compound="left")
+        self.notebook.add(self.tab_overview, text="My Calendar & Dashboard")
         self._dashboard_tab_obj = None
         self._navigator_tab_obj = None
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
         # Ctrl+Tab / Ctrl+Shift+Tab cycle the tabs (Log Today's Work /
-        # My Calendar / My Dashboard / Job Navigator) from anywhere in the
+        # Job Navigator / My Calendar & Dashboard) from anywhere in the
         # main window - one binding sniffs Shift for direction. Returning
         # "break" stops the keypress dead so focus never jumps elsewhere.
         self.bind("<Control-Tab>", self._cycle_notebook_tab)
 
         self._build_today_tab()
-        self._build_calendar_tab()
+        self._build_overview_tab()
 
         status = ttk.Frame(self, padding=(10, 4))
         status.pack(fill="x", side="bottom")
@@ -1395,9 +1403,30 @@ class DEAApp(tk.Tk):
     # ------------------------------------------------------------------
     # "My Calendar" tab
     # ------------------------------------------------------------------
-    def _build_calendar_tab(self):
-        frame = self.tab_calendar
-        ttk.Label(frame, text="Your logging history. Click a day to view/edit that date.",
+    def _build_overview_tab(self):
+        """Combined My Calendar + My Dashboard tab: one scrolling page with
+        the month calendar on top and the efficiency dashboard below it.
+        The calendar (lightweight) builds immediately; the dashboard
+        (matplotlib - slow import) is built lazily on first view."""
+        frame = self.tab_overview
+        canvas = tk.Canvas(frame, highlightthickness=0)
+        vsb = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        self._overview_win = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(self._overview_win, width=e.width))
+        canvas.bind_all("<MouseWheel>", self._overview_wheel, add="+")
+        self._overview_canvas = canvas
+        self.tab_overview_inner = inner
+
+        cal_wrap = ttk.Frame(inner, padding=(4, 4, 4, 0))
+        cal_wrap.pack(fill="x")
+        ttk.Label(cal_wrap, text="Your logging history. Click a day to view/edit that date.",
                   font=("Arial", 9)).pack(anchor="w", pady=(4, 4))
 
         def provider(year, month):
@@ -1410,9 +1439,33 @@ class DEAApp(tk.Tk):
             self.date_var.set(the_date.isoformat())
             self._refresh_today_tab()
 
-        self.my_calendar = MonthCalendar(frame, provider, on_click)
-        self.my_calendar.pack(fill="both", expand=True)
-        legend_frame(frame).pack(anchor="w", pady=(6, 0))
+        self.my_calendar = MonthCalendar(cal_wrap, provider, on_click)
+        self.my_calendar.pack(fill="x")
+        legend_frame(cal_wrap).pack(anchor="w", pady=(6, 0))
+
+        self.overview_dash_wrap = ttk.Frame(inner, padding=(4, 0, 4, 4))
+        self.overview_dash_wrap.pack(fill="x")
+
+    def _overview_wheel(self, event):
+        """Mouse-wheel scrolling for the overview page. App-wide binding
+        that only acts when the pointer is over the overview tab, so it
+        never hijacks scrolling elsewhere."""
+        try:
+            widget = self.winfo_containing(event.x_root, event.y_root)
+        except tk.TclError:
+            return
+        node = widget
+        try:
+            while node is not None and node is not self.tab_overview:
+                node = node.master
+        except (tk.TclError, AttributeError):
+            return
+        if node is None:
+            return
+        try:
+            self._overview_canvas.yview_scroll(-1 * (event.delta // 120), "units")
+        except tk.TclError:
+            pass
 
     def _cycle_notebook_tab(self, event=None):
         """Ctrl+Tab handler: select the next tab (previous with Shift held).
@@ -1449,14 +1502,14 @@ class DEAApp(tk.Tk):
             pass
 
     def _on_tab_changed(self, _event=None):
-        # Built lazily, on first view, rather than at startup - matplotlib's
-        # import is noticeably slow, so this defers that cost to only the
-        # people who actually open this tab, instead of everyone on every
-        # launch.
-        if self.notebook.select() == str(self.tab_dashboard) and self._dashboard_tab_obj is None:
+        # Dashboard built lazily, on first view of the combined tab, rather
+        # than at startup - matplotlib's import is noticeably slow, so this
+        # defers that cost to only the people who actually open this tab,
+        # instead of everyone on every launch.
+        if self.notebook.select() == str(self.tab_overview) and self._dashboard_tab_obj is None:
             from client.personal_dashboard import PersonalDashboardTab
-            self._dashboard_tab_obj = PersonalDashboardTab(self.tab_dashboard, self)
-            self._dashboard_tab_obj.pack(fill="both", expand=True)
+            self._dashboard_tab_obj = PersonalDashboardTab(self.overview_dash_wrap, self)
+            self._dashboard_tab_obj.pack(fill="x")
             self._dashboard_tab_obj.refresh()
         # Same lazy pattern for the embedded Job Navigator: its first
         # paint scans the JOBS share, so don't pay that (or touch the

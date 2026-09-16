@@ -3,3 +3,6 @@ pyinstaller>=6.0.0
 pystray>=0.19.5
 Pillow>=10.0.0
 matplotlib>=3.7.0
+# Native drag-and-drop (Quick Links, Admin Links, file link generator).
+# Pinned: navigator_tab relies on this fork's TkinterDnD._require API.
+tkinterdnd2==0.4.3
