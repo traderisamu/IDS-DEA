@@ -271,6 +271,53 @@ DEA_CONFIG = r"\\EgnyteDrive\idsinc\Shared\Engineering\ENGG PHL\REPORTS\16 Manho
 SHARED_ADMIN_LINKS = os.path.join(os.path.dirname(DEA_CONFIG), "admin_links.json")
 
 
+# Built-in icon set for quick-link buttons (Segoe MDL2 Assets glyphs,
+# theme-proof unlike color emoji). A link may override its type default
+# with any of these via the "Icon..." button in either link manager;
+# stored as link["icon"] in settings.json / admin_links.json.
+LINK_ICON_CHOICES = [
+    ("Globe", "\uE774"),
+    ("Document", "\uE8A5"),
+    ("Folder", "\uE8B7"),
+    ("Calculator", "\uE8EF"),
+    ("Mail", "\uE715"),
+    ("Link", "\uE71B"),
+    ("Star", "\uE734"),
+    ("Wrench", "\uE924"),
+]
+
+
+def default_icon_for_type(typ):
+    return {"web": "\uE774", "file": "\uE8A5", "folder": "\uE8B7"}.get(typ, "\uE71B")
+
+
+def resolve_link_icon(link):
+    """Explicit per-link icon if one was picked, else the type default."""
+    return link.get("icon") or default_icon_for_type(link.get("type"))
+
+
+def pick_link_icon(parent):
+    """Modal icon picker. Returns the chosen glyph, or None if cancelled."""
+    result = {"glyph": None}
+    win = tk.Toplevel(parent)
+    win.title("Choose Icon")
+    win.resizable(False, False)
+    win.transient(parent)
+    win.grab_set()
+    ttk.Label(win, text="Choose an icon:", font=("Segoe UI", 10, "bold")).pack(
+        padx=14, pady=(12, 6))
+    grid = ttk.Frame(win)
+    grid.pack(padx=14, pady=(0, 6))
+    for i, (name, glyph) in enumerate(LINK_ICON_CHOICES):
+        ttk.Button(grid, text="{}  {}".format(glyph, name), width=16,
+                   command=lambda g=glyph: (result.update(glyph=g), win.destroy())
+                   ).grid(row=i // 2, column=i % 2, padx=4, pady=4)
+    ttk.Button(win, text="Cancel", command=win.destroy).pack(pady=(0, 12))
+    win.bind("<Escape>", lambda e: win.destroy())
+    parent.wait_window(win)
+    return result["glyph"]
+
+
 _ADMIN_LINKS_CACHE = {"links": None, "at": 0.0}
 _ADMIN_LINKS_TTL_SECONDS = 60.0
 
@@ -921,7 +968,7 @@ class Navigator(tk.Frame):
         links_frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=2)
         for j, link in enumerate(all_links):
             ttk.Button(links_frame, text="{}  {}".format(
-                self._icon_for_type(link["type"]), link["name"]),
+                resolve_link_icon(link), link["name"]),
                 style="Card.TButton", width=width,
                 command=lambda x=link["target"]: open_target(x)).grid(
                     row=j // 3, column=j % 3, sticky="ew", padx=5, pady=5)
@@ -949,19 +996,19 @@ class Navigator(tk.Frame):
         gen_frame.grid_columnconfigure(0, weight=1)
 
         drop = tk.Label(gen_frame, text="Drop files / folders here (multi-select OK)",
-                        font=("Segoe UI", 10), bg="#ffffff", fg="#68727d",
-                        relief="groove", borderwidth=2, height=2)
-        drop.pack(fill="x", padx=5, pady=(5, 2))
+                        font=("Segoe UI", 9), bg="#ffffff", fg="#68727d",
+                        relief="groove", borderwidth=2, height=1)
+        drop.pack(fill="x", padx=4, pady=(4, 2))
 
         btn_row = ttk.Frame(gen_frame, style="App.TFrame")
-        btn_row.pack(fill="x", padx=5, pady=2)
+        btn_row.pack(fill="x", padx=4, pady=1)
         ttk.Button(btn_row, text="Add Files...", command=self._gen_pick_files).pack(side="left")
         ttk.Button(btn_row, text="Add Folder...", command=self._gen_pick_folder).pack(side="left", padx=6)
         ttk.Button(btn_row, text="Copy All", command=self._gen_copy_all).pack(side="left")
         ttk.Button(btn_row, text="Clear", command=self._gen_clear).pack(side="right")
 
         tree = ttk.Treeview(gen_frame, columns=("unc",), show="tree headings",
-                            style="Nav.Treeview", height=5)
+                            style="Nav.Treeview", height=3)
         tree.heading("#0", text="Name")
         tree.heading("unc", text="UNC Path")
         tree.column("#0", width=200, stretch=False)
@@ -1007,6 +1054,8 @@ class Navigator(tk.Frame):
             self._gen_add_paths([path])
 
     def _gen_add_dropped(self, data):
+        # A fresh drop always replaces the list - never accumulates.
+        self._gen_files = []
         self._gen_add_paths(parse_drop_paths(data))
 
     def _gen_add_paths(self, raw_paths):
@@ -1164,7 +1213,7 @@ class Navigator(tk.Frame):
 
     def _icon_for_type(self, typ):
         # Modern Windows (Segoe MDL2 Assets) glyphs instead of emoji.
-        return {"web": "\uE774", "file": "\uE8A5", "folder": "\uE8B7"}.get(typ, "\uE71B")
+        return default_icon_for_type(typ)
 
     def open_job_folder(self, rel):
         if not self.current_job:
@@ -1316,9 +1365,10 @@ class Navigator(tk.Frame):
                 tree.delete(x)
             for idx, link in enumerate(all_links()):
                 admin = idx < len(get_admin_links())
+                shown = "{} {}".format(resolve_link_icon(link), link["name"])
                 tree.insert("", "end", iid=str(idx),
                             values=("Admin" if admin else link["type"], link["target"]),
-                            text=("{} (Admin)".format(link["name"]) if admin else link["name"]))
+                            text=("{} (Admin)".format(shown) if admin else shown))
 
         def add_link():
             name = simpledialog.askstring(APP_NAME, "Link name:", parent=win)
@@ -1362,6 +1412,26 @@ class Navigator(tk.Frame):
             if not name:
                 return
             link["name"] = name.strip()
+            save_settings(self.settings)
+            reload_tree()
+            tree.selection_set(str(idx))
+            tree.see(str(idx))
+            self._show_job()
+
+        def set_link_icon(_=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            idx = int(sel[0])
+            if idx < len(get_admin_links()):
+                messagebox.showwarning(
+                    APP_NAME, "Admin links are fixed here \u2014 change icons via Admin Links....", parent=win)
+                return
+            link = self.settings["links"][idx - len(get_admin_links())]
+            glyph = pick_link_icon(win)
+            if not glyph:
+                return
+            link["icon"] = glyph
             save_settings(self.settings)
             reload_tree()
             tree.selection_set(str(idx))
@@ -1419,6 +1489,7 @@ class Navigator(tk.Frame):
         ttk.Button(buttons, text="Delete", command=delete_link).pack(side="left")
         ttk.Button(buttons, text="\u25B2 Up", command=lambda: move_link(-1)).pack(side="left")
         ttk.Button(buttons, text="\u25BC Down", command=lambda: move_link(1)).pack(side="left", padx=6)
+        ttk.Button(buttons, text="Icon...", command=set_link_icon).pack(side="left")
         buttons2 = ttk.Frame(win)
         buttons2.pack(fill="x", padx=12, pady=(0, 12))
         ttk.Button(buttons2, text="Admin Links...", command=lambda: self._edit_admin_links(win)).pack(side="left")
@@ -1479,7 +1550,8 @@ class Navigator(tk.Frame):
             for x in tree.get_children():
                 tree.delete(x)
             for i, l in enumerate(links):
-                tree.insert("", "end", iid=str(i), values=(l["type"], l["target"]), text=l["name"])
+                shown = "{} {}".format(resolve_link_icon(l), l["name"])
+                tree.insert("", "end", iid=str(i), values=(l["type"], l["target"]), text=shown)
 
         def add():
             name = simpledialog.askstring(APP_NAME, "Admin link name:", parent=win)
@@ -1508,6 +1580,19 @@ class Navigator(tk.Frame):
             if not name:
                 return
             links[i]["name"] = name.strip()
+            reload_tree()
+            tree.selection_set(str(i))
+            tree.see(str(i))
+
+        def set_icon(_=None):
+            sel = tree.selection()
+            if not sel:
+                return
+            i = int(sel[0])
+            glyph = pick_link_icon(win)
+            if not glyph:
+                return
+            links[i]["icon"] = glyph
             reload_tree()
             tree.selection_set(str(i))
             tree.see(str(i))
@@ -1572,6 +1657,7 @@ class Navigator(tk.Frame):
         ttk.Button(btns, text="Delete", command=delete).pack(side="left")
         ttk.Button(btns, text="\u25B2 Up", command=lambda: move(-1)).pack(side="left")
         ttk.Button(btns, text="\u25BC Down", command=lambda: move(1)).pack(side="left", padx=6)
+        ttk.Button(btns, text="Icon...", command=set_icon).pack(side="left")
         btns2 = ttk.Frame(win)
         btns2.pack(fill="x", padx=12, pady=(0, 12))
         ttk.Button(btns2, text="Save", command=save).pack(side="right")

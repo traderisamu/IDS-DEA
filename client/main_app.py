@@ -74,20 +74,10 @@ class DEAApp(tk.Tk):
             self._first_run_pick_name()
             self.employee_name = LS.get_employee_name()  # may still be blank if they closed it
 
-        # PIN is checked once here, at this startup/identity-confirmation
-        # moment - not repeatedly every time the window is later opened
-        # from the tray/hotkey during the day. Once unlocked, the rest of
-        # this running session is trusted, the same way the employee name
-        # itself is only ever confirmed once per session.
+        # No startup PIN gate: the app opens straight into the logger.
+        # (The per-PC employee name is still locked in red at the top and
+        # can only be reset with admin approval - see _reset_user.)
         self._locked = False
-        if self.employee_name:
-            expected_pin = self.cfg.pin_for(self.employee_name)
-            if expected_pin:
-                self.deiconify()
-                self._locked = not self._prompt_unlock_pin(expected_pin)
-            # No "else": if the Employees sheet has no Employee ID (or no
-            # trailing number) for this person, there's simply no PIN to
-            # check - nothing locks for them until the admin adds one.
 
         self._build_ui()
         if self.employee_name and not self._locked:

@@ -90,7 +90,7 @@ class MonthCalendar(ttk.Frame):
 
                 cell = tk.Label(
                     self.grid_frame, text=str(day_num), bg=bg, fg=fg,
-                    font=("Arial", 10, "bold"), width=4, height=2, relief="flat",
+                    font=("Arial", 9, "bold"), width=3, height=1, relief="flat",
                     cursor="hand2" if self.on_day_click else "arrow",
                 )
                 cell.grid(row=row, column=col, sticky="nsew", padx=1, pady=1)
