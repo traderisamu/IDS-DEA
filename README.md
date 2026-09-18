@@ -441,6 +441,12 @@ Admin Dashboard has:
   the calendar grid is showing: every team ranked by average hours per
   employee, and every individual ranked by total hours logged, not just
   the single top pick shown inline above the grid.
+- **Version chips** — every employee row shows the app version green
+  (`v2.0.0`) when they're on your build, amber (`v1.x.x`) when outdated,
+  gray (`--`) when they've never launched a version-reporting build.
+  Versions come from tiny heartbeat files each app writes to
+  `Logs\.versions\` at startup - don't delete that folder. Anyone showing
+  `--` or amber after a rollout is who still needs the new installer.
 - **View Employee PINs...** — a read-only lookup of every employee's
   current PIN, so you don't have to go hunt through the spreadsheet to
   answer "what's so-and-so's PIN" or "why isn't the app locking for

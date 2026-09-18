@@ -12,6 +12,8 @@ by its own owner, so lock/contention risk stays low.
 import os
 import re
 import csv
+import json
+import socket
 import datetime as dt
 import openpyxl
 from openpyxl.styles import Font, PatternFill
@@ -168,6 +170,82 @@ def logs_folder(shared_path):
 
 def employee_file_path(shared_path, employee_name):
     return os.path.join(logs_folder(shared_path), f"{safe_filename(employee_name)}.xlsx")
+
+
+VERSIONS_SUBFOLDER = ".versions"
+
+
+def versions_folder(shared_path):
+    return os.path.join(logs_folder(shared_path), VERSIONS_SUBFOLDER)
+
+
+def heartbeat_file_path(shared_path, employee_name):
+    return os.path.join(versions_folder(shared_path), f"{safe_filename(employee_name)}.json")
+
+
+def write_heartbeat(shared_path, employee_name, app_version):
+    """Best-effort 'I am running version X' stamp for the Admin Dashboard's
+    per-person version chips. Called at app startup and whenever the main
+    window is opened - never allowed to block or break a launch, so every
+    failure mode (unreachable drive, locked file, anything else) just
+    means 'no fresh heartbeat' and returns False."""
+    try:
+        if not shared_path or not os.path.isdir(shared_path):
+            return False
+        os.makedirs(versions_folder(shared_path), exist_ok=True)
+        try:
+            pc = socket.gethostname()
+        except OSError:
+            pc = ""
+        payload = {
+            "app_version": str(app_version),
+            "updated_at": dt.datetime.now().isoformat(timespec="seconds"),
+            "pc": pc,
+        }
+
+        def save_fn(tmp_path):
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+
+        _atomic_write(save_fn, heartbeat_file_path(shared_path, employee_name))
+        return True
+    except (OSError, FileLockedError):
+        return False
+
+
+def read_version_heartbeats(shared_path):
+    """{employee_name: {"app_version", "updated_at" (datetime|None),
+    "pc"}} for every heartbeat file found. Skips missing/corrupt files;
+    raises DriveUnreachableError when the share itself is down."""
+    check_shared_reachable(shared_path)
+    folder = versions_folder(shared_path)
+    out = {}
+    if not os.path.isdir(folder):
+        return out
+    try:
+        fnames = os.listdir(folder)
+    except OSError:
+        return out
+    for fname in fnames:
+        if not fname.lower().endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(folder, fname), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or not data.get("app_version"):
+                continue
+            try:
+                updated = dt.datetime.fromisoformat(str(data.get("updated_at", "")))
+            except ValueError:
+                updated = None
+            out[os.path.splitext(fname)[0]] = {
+                "app_version": str(data["app_version"]),
+                "updated_at": updated,
+                "pc": str(data.get("pc") or ""),
+            }
+        except (OSError, ValueError):
+            continue
+    return out
 
 
 def ensure_logs_folder(shared_path):

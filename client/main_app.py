@@ -78,6 +78,7 @@ class DEAApp(tk.Tk):
         # (The per-PC employee name is still locked in red at the top and
         # can only be reset with admin approval - see _reset_user.)
         self._locked = False
+        self._write_heartbeat()
 
         self._build_ui()
         if self.employee_name and not self._locked:
@@ -314,12 +315,23 @@ class DEAApp(tk.Tk):
         self.hotkey = GlobalHotkey(callback=lambda: self.after(0, self._toggle_window))
         self.hotkey.start()
 
+    def _write_heartbeat(self):
+        """Announce this PC's running build to the Admin Dashboard's
+        per-person version chips (best-effort - never blocks anything)."""
+        if not self.employee_name:
+            return
+        try:
+            ds.write_heartbeat(self.shared_path, self.employee_name, C.APP_VERSION)
+        except Exception:
+            pass
+
     def _show_window(self):
         self.deiconify()
         self.attributes("-topmost", True)
         self.lift()
         self.focus_force()
         self.after(300, lambda: self.attributes("-topmost", False))
+        self._write_heartbeat()
 
     def _toggle_window(self):
         """Alt+Escape's actual behavior: show the window if it's

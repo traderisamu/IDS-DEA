@@ -198,6 +198,8 @@ class AdminDashboard(tk.Toplevel):
         try:
             grid_data = ds.admin_month_grid(self.shared_path, employees, self.year, self.month,
                                              self.cfg.min_hours_green())
+            heartbeats = ds.read_version_heartbeats(self.shared_path)
+            hb_norm = {ds._normalize_name(k): v for k, v in heartbeats.items()}
             self._team_ranking = ds.rank_teams_by_avg_hours(self.shared_path, employees, self.year, self.month)
             self._individual_ranking = ds.rank_individuals_by_hours(
                 self.shared_path, employees, self.year, self.month)
@@ -240,8 +242,27 @@ class AdminDashboard(tk.Toplevel):
                                                               sticky="w", pady=(6, 0))
                 row_idx += 1
 
-            tk.Label(self.inner, text=name, width=NAME_COL_W, anchor="w",
-                     font=("Arial", 8)).grid(row=row_idx, column=0, sticky="w", padx=2)
+            head = tk.Frame(self.inner)
+            head.grid(row=row_idx, column=0, sticky="w", padx=2)
+            tk.Label(head, text=name, width=NAME_COL_W, anchor="w",
+                     font=("Arial", 8)).pack(side="left")
+            info = heartbeats.get(name) or hb_norm.get(ds._normalize_name(name))
+            if info is None:
+                chip_text, chip_fg = "--", "#9E9E9E"
+            else:
+                try:
+                    stale = (info["updated_at"] is not None
+                             and (dt.datetime.now() - info["updated_at"]).days > 7)
+                except TypeError:
+                    stale = False
+                if stale:
+                    chip_text, chip_fg = "v" + info["app_version"], "#9E9E9E"
+                elif info["app_version"] == C.APP_VERSION:
+                    chip_text, chip_fg = "v" + info["app_version"], "#2E7D32"
+                else:
+                    chip_text, chip_fg = "v" + info["app_version"], "#EF6C00"
+            tk.Label(head, text=chip_text, font=("Arial", 7),
+                     foreground=chip_fg).pack(side="left", padx=(4, 0))
             day_map = grid_data.get(name, {})
             for d in range(1, days_in_month + 1):
                 iso = dt.date(self.year, self.month, d).isoformat()
