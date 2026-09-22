@@ -139,8 +139,14 @@ def enable_typeahead(combo, get_all_values):
 
     def refresh(_event=None):
         typed = combo.get()
-        all_values = get_all_values() or []
-        if typed:
+        all_values = [str(v) for v in (get_all_values() or [])]
+        if (typed and typed.strip().isdigit() and all_values
+                and all(v.isdigit() for v in all_values)):
+            # Count-style history (joint/sheet numbers): narrowing digits
+            # by substring is useless, so offer the whole list to pick
+            # from instead of an empty popup.
+            filtered = [v for v in all_values if v != typed] or list(all_values)
+        elif typed:
             filtered = [v for v in all_values if typed.lower() in v.lower() and v != typed]
         else:
             filtered = list(all_values)

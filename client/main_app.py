@@ -54,7 +54,7 @@ class DEAApp(tk.Tk):
         except Exception:
             pass
         self.title(f"{C.APP_TITLE}  (v{C.APP_VERSION})")
-        self.geometry("920x760")
+        self.geometry("1000x820")
         self.minsize(860, 700)
         self._apply_icon()
         # Start hidden - the app runs quietly in the system tray and only

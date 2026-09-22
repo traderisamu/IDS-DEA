@@ -413,6 +413,22 @@ def get_employee_job_code_history(shared_path, employee_name, limit=25):
     return _distinct_most_recent(pairs, limit)
 
 
+def _clean_detail_value(value):
+    """Normalizes one Details value for the suggestion memory. Numbers come
+    back from Excel as int/float whenever a cell was ever touched as a
+    number (which would crash the typeahead's string filtering), and some
+    legacy rows hold the literal string "None" from an old None-to-text
+    coercion. Returns "" for anything with no suggestable content."""
+    if value is None or isinstance(value, bool):
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = str(value).strip()
+    if not text or text.lower() == "none":
+        return ""
+    return text
+
+
 def get_employee_details_history(shared_path, employee_name, job=None, work_description=None, limit=15):
     """Distinct Details strings this employee has personally used before,
     most recently used first, scoped to whichever of JOB Code / Work
@@ -426,7 +442,11 @@ def get_employee_details_history(shared_path, employee_name, job=None, work_desc
         entries = [e for e in entries if e.get("job") == job]
     if work_description:
         entries = [e for e in entries if e.get("work_description") == work_description]
-    pairs = [(e["details"], e["entered_at"]) for e in entries if e.get("details")]
+    pairs = []
+    for e in entries:
+        cleaned = _clean_detail_value(e.get("details"))
+        if cleaned:
+            pairs.append((cleaned, e["entered_at"]))
     return _distinct_most_recent(pairs, limit)
 
 
