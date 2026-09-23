@@ -22,6 +22,17 @@ DEFAULT_SHARED_PATH = (
 CONFIG_FILENAME = "DEA_Config.xlsx"
 LOGS_SUBFOLDER = "Logs"
 
+# Silent auto-update source: the shared folder where staged releases live
+# (IDS_DEA_Logger.exe + version.txt, copied there at rollout time - see
+# README's rollout notes). The app compares version.txt against its own
+# APP_VERSION at startup and self-updates when the staged one is newer.
+UPDATE_DIST_FOLDER = (
+    r"\\EgnyteDrive\idsinc\Shared\Engineering\ENGG PHL\STANDARD PROCEDURES & FILES"
+    r"\Engg Software\DEA"
+)
+UPDATE_EXE_FILENAME = "IDS_DEA_Logger.exe"
+UPDATE_VERSION_FILENAME = "version.txt"
+
 # Local (per-PC) settings file - remembers which employee this PC belongs
 # to, and the resolved shared path, so the user is never asked twice.
 LOCAL_APP_FOLDER_NAME = "IDS_DEA_Logger"

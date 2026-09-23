@@ -565,12 +565,20 @@ class Navigator(tk.Frame):
 
         ttk.Label(sidebar, text="FAVORITES", style="Sidebar.TLabel",
                   font=("Segoe UI", 8, "bold")).pack(anchor="w")
-        self.fav_list = tk.Listbox(sidebar, bg="#20252b", fg="#e8edf2",
+        fav_frame = tk.Frame(sidebar, bg="#20252b")
+        fav_frame.pack(fill="x", pady=(6, 10))
+        self.fav_list = tk.Listbox(fav_frame, bg="#20252b", fg="#e8edf2",
                                    selectbackground="#3d79b9", selectforeground="white",
                                    relief="flat", highlightthickness=0,
                                    font=("Segoe UI", 9), activestyle="none",
-                                   height=5, exportselection=False)
-        self.fav_list.pack(fill="x", pady=(6, 10))
+                                   height=10, exportselection=False)
+        fav_scroll = tk.Scrollbar(fav_frame, orient="vertical", command=self.fav_list.yview,
+                                  bg="#2b3138", troughcolor="#20252b",
+                                  activebackground="#3d79b9", relief="flat",
+                                  borderwidth=0, width=12, highlightthickness=0)
+        self.fav_list.configure(yscrollcommand=fav_scroll.set)
+        self.fav_list.pack(side="left", fill="x", expand=True)
+        fav_scroll.pack(side="right", fill="y")
         self.fav_list.bind("<<ListboxSelect>>", self._on_favorite_select)
         self.fav_list.bind("<Double-Button-1>", lambda e: self._favorite_open_folder())
         self.fav_list.bind("<Button-3>", self._favorite_context_menu)

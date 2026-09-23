@@ -117,6 +117,13 @@ if errorlevel 1 (
 )
 rmdir /S /Q "%BUILD_TMP%" >nul 2>&1
 rmdir /S /Q "%DIST_TMP%" >nul 2>&1
+REM Stamp the release tag the app's auto-updater (and anyone rolling out)
+REM reads to tell which build this is - copy it next to the exe on the
+REM shared drive at rollout time.
+"%VENV_PY%" -c "import sys; sys.path.insert(0, '.'); from shared.constants import APP_VERSION; open('dist\version.txt', 'w').write(APP_VERSION)"
+if exist "dist\version.txt" (
+    echo       OK - release tag written to dist\version.txt
+)
 
 echo.
 echo ============================================================

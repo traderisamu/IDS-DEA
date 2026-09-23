@@ -61,12 +61,26 @@ whatever OS it runs on, so it must run on Windows.
 1. Install Python 3.9+ from python.org if not already installed (check
    "Add python.exe to PATH" during setup).
 2. Double-click **`build.bat`**.
-3. When it finishes, your exe is at `dist\IDS_DEA_Logger.exe`.
+3. When it finishes, your exe is at `dist\IDS_DEA_Logger.exe`, next to a
+   matching `dist\version.txt` release tag.
 
 This build takes noticeably longer than it used to, and the resulting
 .exe is a fair bit larger - the My Dashboard tab's charts need
 matplotlib, which is a large dependency. Worth expecting a few minutes
 for this step rather than a few seconds.
+
+### Rollout notes (handing a build to the team)
+
+The shared handout folder (e.g. `...\Engg Software\DEA`) needs only:
+`install.bat` + `IDS_DEA_Logger.exe` (flat, or inside `dist\`) +
+`uninstall.bat` + `version.txt`. Optional: `admin_links.json` (offline
+fallback) and `DEA_Config.xlsx` (first-install seed only).
+
+`version.txt` is what drives the app's silent auto-update: every launch
+compares it against the running build and, when the staged one is newer,
+downloads it, swaps it in on restart (keeping one `.bak`), and relaunches
+- no prompts, no `install.bat` needed for updates. Deleting or editing
+`version.txt` just disables auto-update; the app keeps running.
 
 ## 4. Install on each team member's PC
 

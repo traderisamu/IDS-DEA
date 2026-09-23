@@ -34,11 +34,12 @@ class TrayIcon:
     themselves (e.g. via `root.after(0, fn)`) before touching any
     widget."""
 
-    def __init__(self, icon_path, title, on_open=None, on_admin=None, on_exit=None):
+    def __init__(self, icon_path, title, on_open=None, on_admin=None, on_check=None, on_exit=None):
         self._icon_path = icon_path
         self._title = title
         self._on_open = on_open
         self._on_admin = on_admin
+        self._on_check = on_check
         self._on_exit = on_exit
         self._icon = None
         self._thread = None
@@ -54,6 +55,7 @@ class TrayIcon:
         menu = pystray.Menu(
             pystray.MenuItem("Open DEA Logger", self._handle_open, default=True),
             pystray.MenuItem("Admin Dashboard", self._handle_admin),
+            pystray.MenuItem("Check for Updates", self._handle_check),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Exit", self._handle_exit),
         )
@@ -73,6 +75,10 @@ class TrayIcon:
     def _handle_admin(self, icon, item):
         if self._on_admin:
             self._on_admin()
+
+    def _handle_check(self, icon, item):
+        if self._on_check:
+            self._on_check()
 
     def _handle_exit(self, icon, item):
         if self._on_exit:

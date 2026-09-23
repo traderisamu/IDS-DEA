@@ -18,6 +18,7 @@ from client.autocomplete import enable_typeahead
 from client.autostart import ensure_autostart
 from client.shortcuts import ensure_desktop_shortcut
 from client import tray as trayicon
+from client import updater as UPD
 from client.hotkey import GlobalHotkey, DEFAULT_LABEL as HOTKEY_LABEL
 
 log = get_logger(__name__)
@@ -89,6 +90,8 @@ class DEAApp(tk.Tk):
         tray_started = self._start_tray()
         ensure_desktop_shortcut()
         self._start_hotkey()
+        UPD.consume_update_notice(self)
+        UPD.auto_check(self)
 
         # Always open the main window on launch - manual or auto-started
         # at login. The tray icon keeps running underneath for reminders
@@ -307,9 +310,23 @@ class DEAApp(tk.Tk):
             ICON_PATH, C.APP_TITLE,
             on_open=lambda: self.after(0, self._show_window),
             on_admin=lambda: self.after(0, self._open_admin_from_tray),
+            on_check=lambda: self.after(0, self._manual_update_check),
             on_exit=lambda: self.after(0, self._quit_app),
         )
         return self.tray.start()
+
+    def _manual_update_check(self):
+        """Tray item / header button: on-demand update check with the
+        result shown in the status bar (silent path stays silent)."""
+        try:
+            message = UPD.manual_check(self)
+        except Exception:
+            message = ""
+        if message and hasattr(self, "status_label"):
+            try:
+                self.status_label.config(text=message)
+            except tk.TclError:
+                pass
 
     def _start_hotkey(self):
         self.hotkey = GlobalHotkey(callback=lambda: self.after(0, self._toggle_window))
@@ -488,6 +505,7 @@ class DEAApp(tk.Tk):
         btn_row = ttk.Frame(right)
         btn_row.pack(anchor="e", pady=(4, 0))
         ttk.Button(btn_row, text="Cutoff Summary...", command=self._open_cutoff_summary).pack(side="left", padx=4)
+        ttk.Button(btn_row, text="Check for Updates", command=self._manual_update_check).pack(side="left", padx=4)
         ttk.Button(btn_row, text="Not you? Reset", command=self._reset_user).pack(side="left", padx=4)
         ttk.Button(btn_row, text="Admin Login", command=self._open_admin).pack(side="left", padx=4)
 
