@@ -74,6 +74,7 @@ if exist "%DIST_TMP%" rmdir /S /Q "%DIST_TMP%"
     --hidden-import client.efficiency_view ^
     --hidden-import client.navigator_tab ^
     --hidden-import client.latest_details_tab ^
+    --hidden-import client.link_generator_tab ^
     --hidden-import tkinterdnd2 ^
     --hidden-import tkinterdnd2.TkinterDnD ^
     --add-data "%~dp0.venv\Lib\site-packages\tkinterdnd2\tkdnd;tkinterdnd2\tkdnd" ^

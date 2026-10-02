@@ -517,7 +517,6 @@ class DEAApp(tk.Tk):
         self.tab_today = ttk.Frame(self.notebook)
         self.tab_overview = ttk.Frame(self.notebook)
         self.tab_navigator = ttk.Frame(self.notebook)
-        self.tab_latest = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_today, text="Log Today's Work")
         # ttk cannot paint one tab's background, so the NaviTool 2.0 tab
         # carries a crisp green-dot image (always visible, theme-proof)
@@ -529,15 +528,16 @@ class DEAApp(tk.Tk):
                     self._nav_tab_dot.put("#2e7d32", (_px, _py))
         self.notebook.add(self.tab_navigator, text="NaviTool 2.0",
                           image=self._nav_tab_dot, compound="left")
-        self.notebook.add(self.tab_latest, text="Latest Details and Maps")
-        self.notebook.add(self.tab_overview, text="My Calendar & Dashboard")
+        self.tab_linkgen = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_linkgen, text="Link Generator")
+        self.notebook.add(self.tab_overview, text="Calendar & Dashboard")
         self._dashboard_tab_obj = None
         self._navigator_tab_obj = None
-        self._latest_tab_obj = None
+        self._linkgen_tab_obj = None
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
         # Ctrl+Tab / Ctrl+Shift+Tab cycle the tabs (Log Today's Work /
-        # NaviTool 2.0 / Latest Details and Maps / My Calendar &
-        # Dashboard) from anywhere in the
+        # NaviTool 2.0 / Link Generator / Calendar & Dashboard) from
+        # anywhere in the
         # main window - one binding sniffs Shift for direction. Returning
         # "break" stops the keypress dead so focus never jumps elsewhere.
         self.bind("<Control-Tab>", self._cycle_notebook_tab)
@@ -1425,10 +1425,10 @@ class DEAApp(tk.Tk):
             self.my_calendar.refresh()
 
     # ------------------------------------------------------------------
-    # "My Calendar" tab
+    # "Calendar & Dashboard" tab
     # ------------------------------------------------------------------
     def _build_overview_tab(self):
-        """Combined My Calendar + My Dashboard tab: one scrolling page with
+        """Combined Calendar + Dashboard tab: one scrolling page with
         the month calendar on top and the efficiency dashboard below it.
         The calendar (lightweight) builds immediately; the dashboard
         (matplotlib - slow import) is built lazily on first view."""
@@ -1542,18 +1542,12 @@ class DEAApp(tk.Tk):
             from client.navigator_tab import Navigator
             self._navigator_tab_obj = Navigator(self.tab_navigator)
             self._navigator_tab_obj.pack(fill="both", expand=True)
-        # Latest Details and Maps follows whichever job NaviTool has
-        # selected - (re)built lazily like the dashboard, and refreshed
-        # on every visit so a job picked in NaviTool shows up here.
-        if self.notebook.select() == str(self.tab_latest):
-            if self._latest_tab_obj is None:
-                from client.latest_details_tab import LatestDetailsTab
-                self._latest_tab_obj = LatestDetailsTab(
-                    self.tab_latest,
-                    lambda: (self._navigator_tab_obj.current_job
-                             if self._navigator_tab_obj is not None else None))
-                self._latest_tab_obj.pack(fill="both", expand=True)
-            self._latest_tab_obj.refresh()
+        # Link Generator is cheap (no heavy imports) but still builds
+        # lazily for consistency - first view only.
+        if self.notebook.select() == str(self.tab_linkgen) and self._linkgen_tab_obj is None:
+            from client.link_generator_tab import LinkGeneratorFrame
+            self._linkgen_tab_obj = LinkGeneratorFrame(self.tab_linkgen)
+            self._linkgen_tab_obj.pack(fill="both", expand=True)
         # Green title text while the NaviTool 2.0 tab is current (see
         # _paint_navigator_tab) - cleared on every other tab.
         self._paint_navigator_tab(self.notebook.select() == str(self.tab_navigator))

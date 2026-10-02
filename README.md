@@ -217,7 +217,7 @@ Hours, and Remarks, then **Add Entry**.
 
 - **« Week / ‹ Day / Today / Day › / Week »** sit right next to the Date
   field, so jumping to yesterday, last week, or back to today doesn't
-  need a trip to the My Calendar tab. You can still type a date directly
+   need a trip to the Calendar & Dashboard tab. You can still type a date directly
   into the box too - the day of the week (e.g. "Friday") shows right
   underneath it as a sanity check.
 - **Press `Alt+Escape` from anywhere** (any program, any time) to
@@ -279,21 +279,31 @@ Hours, and Remarks, then **Add Entry**.
   tall enough to show all of this without resizing.
 
 **🟢 NaviTool 2.0 tab** (2nd tab) — job folder shortcuts, quick links,
-and a file link generator (drop files to get share-ready UNC links).
-Connection folders open one level deeper now: e.g. BS › CALCS › BS01,
-BS › MAPS, STAIRS › STAIR 1 — every level stays clickable (each menu
-starts with an "Open this folder" item) so you can open just BS or
-BS › CALCS when that's all you want.
+and an embedded Latest Details and Maps panel. Connection folders open
+one level deeper now: e.g. BS › CALCS › BS01, BS › MAPS, STAIRS › STAIR 1
+— every level stays clickable (each menu starts with an "Open this
+folder" item) so you can open just BS or BS › CALCS when that's all
+you want. The **Latest Details...** button (beside Add to Favorites)
+jumps to the panel.
 
-**Latest Details and Maps tab** (3rd tab) — follows whichever job is
-selected in NaviTool 2.0 and shows one row per connection with a direct
-link to its newest issued calc detail and newest map (click to open the
-PDF), plus an open-folder button. Toggle Structural / Miscellaneous on
-top. "Latest" means highest REV first, newest MMDDYY date second, and
-covers both the working CALCS/MAPS folders and the dated submittal
-packages (which can hold newer revisions).
+**Latest Details and Maps** (inside NaviTool, top of each job) — one
+row per connection with a direct link to its newest issued calc detail
+and newest map (click to open the PDF), plus an open-folder button,
+grouped under MC / VB / BS / … family headers (misc: STAIRS, LADDERS,
+RAILINGS, GATES, EC — no map column there). Toggle Structural /
+Miscellaneous on top. "Latest" means highest REV first, newest MMDDYY
+date second, and covers both the working CALCS/MAPS folders and the
+dated submittal packages (which can hold newer revisions). Files
+stamped with a placeholder date (not sent to the detailer yet) are
+skipped. First visit scans with a progress bar; later visits paint
+instantly from cache and refresh silently in the background (Cancel
+stops a slow scan, Refresh forces a full one).
 
-**My Calendar & Dashboard tab** — one scrolling page: month view of your
+**Link Generator tab** (3rd tab) — drop files/folders straight onto the
+table (or Add them with the buttons) to get share-ready UNC links,
+with per-row double-click copy, Copy All, and Clear.
+
+**Calendar & Dashboard tab** — one scrolling page: month view of your
 own logging history on top (click any day to jump back to that date's
 entries), with the personal efficiency view below, built to help each
 person understand their own work pattern, not to be watched by anyone
