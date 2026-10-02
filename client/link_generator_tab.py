@@ -46,7 +46,7 @@ class LinkGeneratorFrame(ttk.Frame):
 
         body = ttk.Frame(self, padding=(10, 6, 10, 0))
         body.pack(fill="both", expand=True)
-        tree = ttk.Treeview(body, columns=("unc",), show="tree headings", height=12)
+        tree = ttk.Treeview(body, columns=("unc",), show="tree headings", height=4)
         tree.heading("#0", text="Name")
         tree.heading("unc", text="UNC Path")
         tree.column("#0", width=220, stretch=False)
