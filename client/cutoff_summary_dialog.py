@@ -82,16 +82,19 @@ def open_cutoff_summary(parent, cfg, shared_path, employee_name, employee_list=N
             child.destroy()
         cols = ["day", "date", "total"] + [f"job_{i}" for i in range(len(job_codes))]
         tree = ttk.Treeview(table_frame, columns=cols, show="headings", height=18)
-        headers = [("day", "", 44), ("date", "Date", 70), ("total", "Total", 60)]
+        headers = [("day", "", 32), ("date", "Date", 58), ("total", "Total", 48)]
         for code, col in zip(job_codes, cols[3:]):
-            headers.append((col, code, 90))
+            headers.append((col, code, 64))
         for c, label, w in headers:
             tree.heading(c, text=label)
-            tree.column(c, width=w, anchor="center" if c != "date" else "w")
+            tree.column(c, width=w, minwidth=w, stretch=False,
+                        anchor="center" if c != "date" else "w")
         tree.pack(side="left", fill="both", expand=True)
-        scroll = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
-        scroll.pack(side="right", fill="y")
-        tree.configure(yscrollcommand=scroll.set)
+        vscroll = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        vscroll.pack(side="right", fill="y")
+        hscroll = ttk.Scrollbar(table_frame, orient="horizontal", command=tree.xview)
+        hscroll.pack(side="bottom", fill="x")
+        tree.configure(yscrollcommand=vscroll.set, xscrollcommand=hscroll.set)
         return tree
 
     def refresh():

@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM  IDS PH - DEA Logger (+ embedded Job Navigator) - BUILD
+REM  IDS PH - DEA Logger (+ embedded NaviTool 2.0) - BUILD
 REM  Standard build: venv + requirements + PyInstaller, built via
 REM  %TEMP% (never in-place, so cloud-sync locks can't corrupt it),
 REM  then the finished exe is copied to dist\ and launched so you
@@ -73,6 +73,7 @@ if exist "%DIST_TMP%" rmdir /S /Q "%DIST_TMP%"
     --hidden-import client.admin_efficiency_dialog ^
     --hidden-import client.efficiency_view ^
     --hidden-import client.navigator_tab ^
+    --hidden-import client.latest_details_tab ^
     --hidden-import tkinterdnd2 ^
     --hidden-import tkinterdnd2.TkinterDnD ^
     --add-data "%~dp0.venv\Lib\site-packages\tkinterdnd2\tkdnd;tkinterdnd2\tkdnd" ^

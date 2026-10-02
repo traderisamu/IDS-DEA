@@ -517,8 +517,9 @@ class DEAApp(tk.Tk):
         self.tab_today = ttk.Frame(self.notebook)
         self.tab_overview = ttk.Frame(self.notebook)
         self.tab_navigator = ttk.Frame(self.notebook)
+        self.tab_latest = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_today, text="Log Today's Work")
-        # ttk cannot paint one tab's background, so the Job Navigator tab
+        # ttk cannot paint one tab's background, so the NaviTool 2.0 tab
         # carries a crisp green-dot image (always visible, theme-proof)
         # plus green title text while selected (see _paint_navigator_tab).
         self._nav_tab_dot = tk.PhotoImage(width=12, height=12)
@@ -526,14 +527,17 @@ class DEAApp(tk.Tk):
             for _py in range(12):
                 if (_px - 5.5) ** 2 + (_py - 5.5) ** 2 <= 25.0:
                     self._nav_tab_dot.put("#2e7d32", (_px, _py))
-        self.notebook.add(self.tab_navigator, text="Job Navigator",
+        self.notebook.add(self.tab_navigator, text="NaviTool 2.0",
                           image=self._nav_tab_dot, compound="left")
+        self.notebook.add(self.tab_latest, text="Latest Details and Maps")
         self.notebook.add(self.tab_overview, text="My Calendar & Dashboard")
         self._dashboard_tab_obj = None
         self._navigator_tab_obj = None
+        self._latest_tab_obj = None
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
         # Ctrl+Tab / Ctrl+Shift+Tab cycle the tabs (Log Today's Work /
-        # Job Navigator / My Calendar & Dashboard) from anywhere in the
+        # NaviTool 2.0 / Latest Details and Maps / My Calendar &
+        # Dashboard) from anywhere in the
         # main window - one binding sniffs Shift for direction. Returning
         # "break" stops the keypress dead so focus never jumps elsewhere.
         self.bind("<Control-Tab>", self._cycle_notebook_tab)
@@ -1509,7 +1513,7 @@ class DEAApp(tk.Tk):
         return "break"
 
     def _paint_navigator_tab(self, active):
-        """Green title text for the Job Navigator tab while it is the
+        """Green title text for the NaviTool 2.0 tab while it is the
         selected tab. ttk offers no per-tab colors, and the native Windows
         theme ignores tab background mapping entirely - but the selected
         state's foreground mapping does apply, so the title text itself
@@ -1531,14 +1535,26 @@ class DEAApp(tk.Tk):
             self._dashboard_tab_obj = PersonalDashboardTab(self.overview_dash_wrap, self)
             self._dashboard_tab_obj.pack(fill="x")
             self._dashboard_tab_obj.refresh()
-        # Same lazy pattern for the embedded Job Navigator: its first
+        # Same lazy pattern for the embedded NaviTool 2.0: its first
         # paint scans the JOBS share, so don't pay that (or touch the
         # network at all) until someone actually opens the tab.
         if self.notebook.select() == str(self.tab_navigator) and self._navigator_tab_obj is None:
             from client.navigator_tab import Navigator
             self._navigator_tab_obj = Navigator(self.tab_navigator)
             self._navigator_tab_obj.pack(fill="both", expand=True)
-        # Green title text while the Job Navigator tab is current (see
+        # Latest Details and Maps follows whichever job NaviTool has
+        # selected - (re)built lazily like the dashboard, and refreshed
+        # on every visit so a job picked in NaviTool shows up here.
+        if self.notebook.select() == str(self.tab_latest):
+            if self._latest_tab_obj is None:
+                from client.latest_details_tab import LatestDetailsTab
+                self._latest_tab_obj = LatestDetailsTab(
+                    self.tab_latest,
+                    lambda: (self._navigator_tab_obj.current_job
+                             if self._navigator_tab_obj is not None else None))
+                self._latest_tab_obj.pack(fill="both", expand=True)
+            self._latest_tab_obj.refresh()
+        # Green title text while the NaviTool 2.0 tab is current (see
         # _paint_navigator_tab) - cleared on every other tab.
         self._paint_navigator_tab(self.notebook.select() == str(self.tab_navigator))
 

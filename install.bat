@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM  IDS PH - DEA Logger (+ embedded Job Navigator) - INSTALL (per PC)
+REM  IDS PH - DEA Logger (+ embedded NaviTool 2.0) - INSTALL (per PC)
 REM  Run this from the PROJECT FOLDER (the same one build.bat
 REM  is in) - it reads the exe straight out of the dist\ subfolder,
 REM  no need to copy this script into dist first.
@@ -69,7 +69,7 @@ if exist "%TARGET_EXE%" (
     pause
     exit /b 1
 )
-REM Offline fallback for the Job Navigator tab's quick links (used only
+REM Offline fallback for the NaviTool 2.0 tab's quick links (used only
 REM when the shared drive is unreachable - otherwise the shared copy wins).
 if exist "%~dp0admin_links.json" (
     copy /Y "%~dp0admin_links.json" "%INSTALL_DIR%\admin_links.json" >nul

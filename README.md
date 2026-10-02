@@ -278,8 +278,20 @@ Hours, and Remarks, then **Add Entry**.
   7:30/12-1 default on any other PC. The app's default window size is
   tall enough to show all of this without resizing.
 
-**🟢 Job Navigator tab** (2nd tab) — job folder shortcuts, quick links,
+**🟢 NaviTool 2.0 tab** (2nd tab) — job folder shortcuts, quick links,
 and a file link generator (drop files to get share-ready UNC links).
+Connection folders open one level deeper now: e.g. BS › CALCS › BS01,
+BS › MAPS, STAIRS › STAIR 1 — every level stays clickable (each menu
+starts with an "Open this folder" item) so you can open just BS or
+BS › CALCS when that's all you want.
+
+**Latest Details and Maps tab** (3rd tab) — follows whichever job is
+selected in NaviTool 2.0 and shows one row per connection with a direct
+link to its newest issued calc detail and newest map (click to open the
+PDF), plus an open-folder button. Toggle Structural / Miscellaneous on
+top. "Latest" means highest REV first, newest MMDDYY date second, and
+covers both the working CALCS/MAPS folders and the dated submittal
+packages (which can hold newer revisions).
 
 **My Calendar & Dashboard tab** — one scrolling page: month view of your
 own logging history on top (click any day to jump back to that date's

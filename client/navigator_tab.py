@@ -1,7 +1,7 @@
-"""IDS Job Navigator, embedded as a tab inside the DEA Logger.
+"""NaviTool 2.0, embedded as a tab inside the DEA Logger.
 
 Originally a standalone app (Project - Job-nav ChatGPT v2); now imported
-by client/main_app.py and mounted as the "Job Navigator" notebook tab.
+by client/main_app.py and mounted as the "NaviTool 2.0" notebook tab.
 Must stay import-safe: no Tk root creation and no demo runner at import.
 """
 import json
@@ -20,7 +20,7 @@ try:
 except Exception:
     HAS_DND = False
 
-APP_NAME = "IDS Navigator"
+APP_NAME = "NaviTool 2.0"
 JOB_ROOT = r"\\EgnyteDrive\idsinc\Shared\Engineering\ENGG PHL\JOBS"
 
 # Work-stage groups. Each section header is a click-to-collapse toggle.
@@ -42,6 +42,27 @@ def _exists(base, rel):
     return bool(rel) and os.path.isdir(os.path.join(base, rel))
 
 
+def _folder_menu(base, rel, depth=0, max_depth=3):
+    """Nested menu entries for one folder: [(label, rel-or-children), ...].
+
+    Every level starts with an "open this folder" command - tk cascade
+    headers can't run commands themselves, so this keeps each folder
+    clickable - followed by one cascade per subfolder, down to
+    max_depth. A folder with no subfolders of its own collapses to a
+    plain open-folder command (a bare rel string)."""
+    entries = [("\U0001F4C1 Open this folder", rel)]
+    if depth >= max_depth:
+        return entries
+    kids = _dir_entries(base, rel)
+    if kids:
+        entries.append(("-", None))
+        for name in kids:
+            child = rel + "\\" + name if rel else name
+            sub = _folder_menu(base, child, depth + 1, max_depth)
+            entries.append((name, sub if len(sub) > 1 else child))
+    return entries
+
+
 def _dir_entries(base, rel):
     """Sorted list of immediate subfolders under a job-relative path."""
     out = []
@@ -58,7 +79,8 @@ def _dir_entries(base, rel):
 def build_job_sections(job_name):
     """Return [(title, [item, ...]), ...]. An item is either
     {"kind":"button", label, rel, icon} or
-    {"kind":"dropdown", label, icon, menu:[(menu_label, rel), ...]}."""
+    {"kind":"dropdown", label, icon, menu:[(menu_label, rel-or-children), ...]}
+    where a nested list value is a further cascade (see _folder_menu)."""
     base = os.path.join(JOB_ROOT, job_name)
     code = parse_job_code(job_name)
     if not code:
@@ -80,7 +102,8 @@ def build_job_sections(job_name):
             if _exists(base, root):
                 submenu = [(sub, root), ("-", None)]
                 for name in _dir_entries(base, root):
-                    submenu.append((name, root + "\\" + name))
+                    conn = root + "\\" + name
+                    submenu.append((name, _folder_menu(base, conn)))
                 menu.append((sub, submenu))
         calcs.append({"kind": "dropdown", "label": "CALCS", "icon": "\U0001F9EE", "menu": menu})
     elif _exists(base, sc("CALCS")):
@@ -192,7 +215,7 @@ def build_job_sections(job_name):
 
 DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "IDS", "Navigator")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
-SECTION_CACHE_FILE = os.path.join(DATA_DIR, "section_cache.json")
+SECTION_CACHE_FILE = os.path.join(DATA_DIR, "section_cache_v2.json")
 
 
 def load_section_cache():
@@ -1128,6 +1151,21 @@ class Navigator(tk.Frame):
         self._refresh_gen_tree()
         self._gen_hint.set("Cleared.")
 
+    def _fill_menu(self, menu, entries):
+        """Populate a tk.Menu from nested [(label, rel-or-children), ...]
+        entries to any depth: "-" is a separator, a bare rel string is an
+        open-folder command, a list is a further cascade."""
+        for entry in entries or []:
+            if entry[0] == "-":
+                menu.add_separator()
+            elif isinstance(entry[1], str):
+                menu.add_command(label=entry[0],
+                                 command=lambda rr=entry[1]: self.open_job_folder(rr))
+            else:
+                sub = tk.Menu(menu, tearoff=0)
+                self._fill_menu(sub, entry[1])
+                menu.add_cascade(label=entry[0], menu=sub)
+
     def _render_items(self, frame, items, width):
         for i, it in enumerate(items):
             col = i % 3
@@ -1136,21 +1174,7 @@ class Navigator(tk.Frame):
                 mb = ttk.Menubutton(frame, text="\u25BE " + it["label"],
                                     style="Card.TMenubutton", width=width)
                 menu = tk.Menu(mb, tearoff=0)
-                for entry in it["menu"]:
-                    if entry[0] == "-":
-                        menu.add_separator()
-                    elif isinstance(entry[1], str):
-                        menu.add_command(label=entry[0],
-                                         command=lambda rr=entry[1]: self.open_job_folder(rr))
-                    else:
-                        sub = tk.Menu(menu, tearoff=0)
-                        for s_entry in entry[1]:
-                            if s_entry[0] == "-":
-                                sub.add_separator()
-                            else:
-                                sub.add_command(label=s_entry[0],
-                                                command=lambda rr=s_entry[1]: self.open_job_folder(rr))
-                        menu.add_cascade(label=entry[0], menu=sub)
+                self._fill_menu(menu, it["menu"])
                 mb["menu"] = menu
                 mb.grid(row=r, column=col, sticky="ew", padx=5, pady=5)
             elif it["kind"] == "hover":
@@ -1336,7 +1360,7 @@ class Navigator(tk.Frame):
 
     def manage_links(self):
         win = tk.Toplevel(self)
-        win.title("IDS Navigator - Quick Links")
+        win.title("NaviTool 2.0 - Quick Links")
         win.geometry("700x470")
         win.minsize(620, 400)
         win.transient(self.winfo_toplevel())
@@ -1528,7 +1552,7 @@ class Navigator(tk.Frame):
 
         path = SHARED_ADMIN_LINKS
         win = tk.Toplevel(self)
-        win.title("IDS Navigator - Admin Quick Links")
+        win.title("NaviTool 2.0 - Admin Quick Links")
         win.geometry("700x450")
         win.minsize(620, 400)
         win.transient(parent or self.winfo_toplevel())

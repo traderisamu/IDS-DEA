@@ -244,8 +244,10 @@ class AdminDashboard(tk.Toplevel):
 
             head = tk.Frame(self.inner)
             head.grid(row=row_idx, column=0, sticky="w", padx=2)
-            tk.Label(head, text=name, width=NAME_COL_W, anchor="w",
-                     font=("Arial", 8)).pack(side="left")
+            name_label = tk.Label(head, text=name, width=NAME_COL_W, anchor="w",
+                                  font=("Arial", 8), cursor="hand2")
+            name_label.pack(side="left")
+            name_label.bind("<Button-1>", lambda _e, n=name: self._open_employee_workbook(n))
             info = heartbeats.get(name) or hb_norm.get(ds._normalize_name(name))
             if info is None:
                 chip_text, chip_fg = "--", "#9E9E9E"
@@ -386,13 +388,41 @@ class AdminDashboard(tk.Toplevel):
         custom stretch of time."""
         open_admin_efficiency(self, self.cfg, self.shared_path)
 
+    def _open_employee_workbook(self, name):
+        """Opens one individual's Logs workbook (<SharedPath>\\Logs\\<name>.xlsx)
+        in Excel - from the Rankings rows or the calendar name labels. Uses
+        the same rename-tolerant resolver as the readers, so a roster typo
+        fix doesn't break the lookup; a person with no saved file yet gets
+        a plain note instead of an error."""
+        if not name:
+            return
+        path = ds._resolve_existing_file_path(self.shared_path, name)
+        if not os.path.isfile(path):
+            messagebox.showinfo(
+                "No Log File Yet",
+                f"{name} has no saved log workbook yet - nothing to open.\n\n"
+                f"Looked for:\n{path}",
+                parent=self,
+            )
+            return
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(path)  # noqa
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except Exception as e:
+            messagebox.showerror("Could Not Open Workbook", f"{path}\n\n{e}", parent=self)
+
     def _show_rankings(self):
         win = tk.Toplevel(self)
         win.title(f"Rankings - {calendar.month_name[self.month]} {self.year}")
         win.geometry("560x520")
         win.transient(self)
 
-        ttk.Label(win, text=f"Busiest teams and individuals for {calendar.month_name[self.month]} {self.year}",
+        ttk.Label(win, text=f"Busiest teams and individuals for {calendar.month_name[self.month]} {self.year} "
+                            "(double-click a person, or click a name on the calendar, to open their Excel log)",
                   font=("Arial", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
 
         body = ttk.Frame(win)
@@ -424,6 +454,17 @@ class AdminDashboard(tk.Toplevel):
         ind_tree.configure(yscrollcommand=ind_scroll.set)
         ind_tree.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
         ind_scroll.pack(side="right", fill="y", pady=6)
+
+        def _open_selected_workbook(_event=None):
+            sel = ind_tree.selection()
+            if not sel:
+                return
+            values = ind_tree.item(sel[0], "values")
+            if not values or not values[0]:
+                return  # placeholder "No data" row - nothing to open
+            self._open_employee_workbook(values[1])
+
+        ind_tree.bind("<Double-Button-1>", _open_selected_workbook)
         for i, (name, team, total) in enumerate(self._individual_ranking, start=1):
             ind_tree.insert("", "end", values=(i, name, team, f"{total:g}"))
         if not self._individual_ranking:
