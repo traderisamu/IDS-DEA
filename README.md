@@ -217,7 +217,7 @@ Hours, and Remarks, then **Add Entry**.
 
 - **« Week / ‹ Day / Today / Day › / Week »** sit right next to the Date
   field, so jumping to yesterday, last week, or back to today doesn't
-   need a trip to the Calendar & Dashboard tab. You can still type a date directly
+   need a trip to the Dashboard tab. You can still type a date directly
   into the box too - the day of the week (e.g. "Friday") shows right
   underneath it as a sanity check.
 - **Press `Alt+Escape` from anywhere** (any program, any time) to
@@ -278,33 +278,34 @@ Hours, and Remarks, then **Add Entry**.
   7:30/12-1 default on any other PC. The app's default window size is
   tall enough to show all of this without resizing.
 
-**🟢 NaviTool 2.0 tab** (2nd tab) — job folder shortcuts, quick links,
-and an embedded Latest Details and Maps panel. Connection folders open
-one level deeper now: e.g. BS › CALCS › BS01, BS › MAPS, STAIRS › STAIR 1
-— every level stays clickable (each menu starts with an "Open this
-folder" item) so you can open just BS or BS › CALCS when that's all
-you want. The **Latest Details...** button (beside Add to Favorites)
-jumps to the panel.
+**🟢 NaviTool 2.0 tab** (2nd tab) — two tabs inside: **Job Folders**
+(job folder shortcuts, quick links) and **Latest Details**. Connection
+folders open one level deeper now: e.g. BS › CALCS › BS01, BS › MAPS,
+STAIRS › STAIR 1 — every level stays clickable (each menu starts with
+an "Open this folder" item) so you can open just BS or BS › CALCS when
+that's all you want. The **Latest Details...** button (beside Add to
+Favorites) jumps to the Latest Details tab.
 
-**Latest Details and Maps** (inside NaviTool, top of each job) — one
-row per connection with a direct link to its newest issued calc detail
-and newest map (click to open the PDF), plus an open-folder button,
-grouped under MC / VB / BS / … family headers (misc: STAIRS, LADDERS,
-RAILINGS, GATES, EC — no map column there). Toggle Structural /
-Miscellaneous on top. "Latest" means highest REV first, newest MMDDYY
-date second, and covers both the working CALCS/MAPS folders and the
-dated submittal packages (which can hold newer revisions). Files
-stamped with a placeholder date (not sent to the detailer yet) are
-skipped. First visit scans with a progress bar; later visits paint
-instantly from cache and refresh silently in the background (Cancel
-stops a slow scan, Refresh forces a full one).
+**Latest Details** (inside NaviTool) — one tab per connection family
+(BS, MC, VB, …; misc: STAIRS, LADDERS, RAILINGS, GATES, EC). Each
+family tab lists its connections with a direct link to the newest
+issued calc detail, then a MAPS block with one row per map (click any
+file name to open the PDF), plus open-folder buttons. Toggle
+Structural / Miscellaneous on top. "Latest" means highest REV first,
+newest MMDDYY date second (lettered REVs outrank pure-numeric ones),
+and covers both the working CALCS/MAPS folders and the dated submittal
+packages (which can hold newer revisions). Map files need no DETAIL
+keyword (`FBD_MC_MAP05 (S2.91)_REV0Q_081326` works); files stamped with
+a placeholder date (`XXXX`, `04XX26`, … — not sent to the detailer
+yet), reference/layout suffixed copies, and dateless REVs are skipped.
+First visit scans with a progress bar; later visits paint instantly
+from cache and refresh silently in the background (Cancel stops a slow
+scan, Refresh forces a full one).
 
-**Link Generator tab** (3rd tab) — drop files/folders straight onto the
-table (or Add them with the buttons) to get share-ready UNC links,
-with per-row double-click copy, Copy All, and Clear.
-
-**Calendar & Dashboard tab** — one scrolling page: month view of your
-own logging history on top (click any day to jump back to that date's
+**Dashboard tab** (3rd tab) — one scrolling page: the **Link
+Generator** on top (drop files/folders straight onto the table, or Add
+them with the buttons, to get share-ready UNC links), then a month view
+of your own logging history (click any day to jump back to that date's
 entries), with the personal efficiency view below, built to help each
 person understand their own work pattern, not to be watched by anyone
 else:

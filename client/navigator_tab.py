@@ -814,13 +814,15 @@ class Navigator(tk.Frame):
 
     def _show_placeholder(self, text="Select a job from the left."):
         self._clear_content()
-        ttk.Label(self.content, text=text, style="Sub.TLabel",
+        _nb, page_folders, page_latest = self._build_sub_notebook()
+        ttk.Label(page_folders, text=text, style="Sub.TLabel",
                   font=("Segoe UI", 11)).grid(row=0, column=0, columnspan=3, pady=(30, 10))
-        # No job selected: the job area is empty, so show the quick links here.
-        # (The Link Generator lives in its own tab now.)
+        # No job selected: the folders page shows the quick links, and the
+        # Latest page explains itself (the panel guides job selection).
         all_links = get_admin_links() + self.settings.get("links", [])
         width = max([len(l["name"]) + 3 for l in all_links] + [1]) + 2
-        self._render_quick_links(width, 1)
+        self._render_quick_links(page_folders, width, 1)
+        self._mount_latest_panel(page_latest)
 
     # ---------- main content ----------
 
@@ -948,26 +950,50 @@ class Navigator(tk.Frame):
         threading.Thread(target=work, daemon=True).start()
 
     def _jump_to_latest(self):
-        """'Latest Details...' beside Add to Favorites: reveal the
-        embedded Latest Details section and scroll it into view."""
+        """'Latest Details...' beside Add to Favorites: flip to the
+        Latest Details sub-tab and scroll it into view."""
         if not self.current_job:
             self.status_var.set("Select a job from the list first, then click Latest Details.")
             return
-        frame = getattr(self, "_latest_frame", None)
-        if frame is not None:
+        nb = getattr(self, "_sub_nb", None)
+        page = getattr(self, "_page_latest", None)
+        if nb is not None and page is not None:
             try:
-                if not frame.winfo_ismapped():
-                    frame.grid()
-                    self._collapsed.discard("LATEST")
-                    toggle = getattr(self, "_latest_toggle", None)
-                    if toggle is not None:
-                        toggle.configure(text="\u25BE  LATEST DETAILS AND MAPS")
+                nb.select(page)
             except tk.TclError:
                 pass
         try:
             self._content_canvas.yview_moveto(0.0)
         except tk.TclError:
             pass
+
+    def _build_sub_notebook(self):
+        """Job Folders | Latest Details tabs hosting a render. Returns
+        (notebook, folders_page, latest_page)."""
+        nb = ttk.Notebook(self.content)
+        nb.grid(row=0, column=0, columnspan=3, sticky="nsew")
+        self._sub_nb = nb
+        page_folders = ttk.Frame(nb, style="App.TFrame")
+        page_latest = ttk.Frame(nb, style="App.TFrame")
+        nb.add(page_folders, text="Job Folders")
+        nb.add(page_latest, text="Latest Details")
+        self._page_latest = page_latest
+        for pg in (page_folders, page_latest):
+            pg.grid_columnconfigure(0, weight=1, uniform="btn")
+            pg.grid_columnconfigure(1, weight=1, uniform="btn")
+            pg.grid_columnconfigure(2, weight=1, uniform="btn")
+        return nb, page_folders, page_latest
+
+    def _mount_latest_panel(self, page):
+        """Latest Details panel on the sub-notebook's second page. Lazy
+        import avoids a circular import (that module imports JOB_ROOT
+        etc. from here). Recreated per render; instant cache paint keeps
+        it free, and its token guard drops stale background results."""
+        from client.latest_details_tab import LatestDetailsTab
+        self._latest_panel = LatestDetailsTab(page, lambda: self.current_job,
+                                              embedded=True)
+        self._latest_panel.pack(fill="x")
+        self._latest_panel.refresh()
 
     def _render_sections(self, sections):
 
@@ -982,34 +1008,7 @@ class Navigator(tk.Frame):
         width += 2
 
         row = 0
-        # Embedded Latest Details and Maps panel first (its own lazy import
-        # avoids a circular import: that module imports JOB_ROOT etc. from
-        # here). Recreated per render; instant cache paint keeps it free,
-        # and its token guard drops stale background results.
-        if self.current_job:
-            from client.latest_details_tab import LatestDetailsTab
-            self._latest_toggle = tk.Label(
-                self.content, text="\u25BE  LATEST DETAILS AND MAPS",
-                font=("Segoe UI", 9, "bold"),
-                bg="#f5f6f8", fg="#20252b", cursor="hand2")
-            self._latest_toggle.grid(row=row, column=0, columnspan=3,
-                                     sticky="w", padx=8, pady=(2, 0))
-            row += 1
-            self._latest_frame = ttk.Frame(self.content, style="App.TFrame")
-            self._latest_frame.grid(row=row, column=0, columnspan=3,
-                                    sticky="ew", padx=2)
-            self._latest_panel = LatestDetailsTab(
-                self._latest_frame, lambda: self.current_job, embedded=True)
-            self._latest_panel.pack(fill="x")
-            self._latest_toggle.bind(
-                "<Button-1>",
-                lambda e, h=self._latest_toggle, f=self._latest_frame:
-                self._toggle_section("LATEST", h, f, "LATEST DETAILS AND MAPS"))
-            if "LATEST" in self._collapsed:
-                self._latest_frame.grid_remove()
-                self._latest_toggle.configure(text="\u25B8  LATEST DETAILS AND MAPS")
-            self._latest_panel.refresh()
-            row += 1
+        _nb, page_folders, page_latest = self._build_sub_notebook()
         # Stage groups keep their collapsible arrow-toggle, but the toggle
         # shows ONLY the arrow - no title text. Only QUICK LINKS keeps a
         # titled header (see _render_quick_links). Each group still gets
@@ -1017,12 +1016,12 @@ class Navigator(tk.Frame):
         for title, items in sections:
             # Plain label, not a button: a button outline can never appear,
             # and the hand cursor still says "click me". Still collapses.
-            toggle = tk.Label(self.content, text="\u25BE", font=("Segoe UI", 9),
+            toggle = tk.Label(page_folders, text="\u25BE", font=("Segoe UI", 9),
                               bg="#f5f6f8", fg="#555555", cursor="hand2")
             toggle.grid(row=row, column=0, columnspan=3, sticky="w", padx=8,
                         pady=(2 if row == 0 else 10, 0))
             row += 1
-            frame = ttk.Frame(self.content, style="App.TFrame")
+            frame = ttk.Frame(page_folders, style="App.TFrame")
             frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=2)
             self._render_items(frame, items, width)
             toggle.bind("<Button-1>", lambda e, t=title, h=toggle, f=frame:
@@ -1033,18 +1032,19 @@ class Navigator(tk.Frame):
             row += 1
 
         all_links = get_admin_links() + self.settings.get("links", [])
-        self._render_quick_links(width, row)
+        self._render_quick_links(page_folders, width, row)
+        self._mount_latest_panel(page_latest)
 
-    def _render_quick_links(self, width, row):
+    def _render_quick_links(self, host, width, row):
         """Quick-links card block with its own collapse toggle. Shown under a
         selected job and on the empty (no-job-selected) screen."""
         all_links = get_admin_links() + self.settings.get("links", [])
-        links_toggle = tk.Label(self.content, text="\u25BE  QUICK LINKS",
+        links_toggle = tk.Label(host, text="\u25BE  QUICK LINKS",
                                 font=("Segoe UI", 9, "bold"),
                                 bg="#f5f6f8", fg="#20252b", cursor="hand2")
         links_toggle.grid(row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(14, 0))
         row += 1
-        links_frame = ttk.Frame(self.content, style="App.TFrame")
+        links_frame = ttk.Frame(host, style="App.TFrame")
         links_frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=2)
         for j, link in enumerate(all_links):
             ttk.Button(links_frame, text="{}  {}".format(

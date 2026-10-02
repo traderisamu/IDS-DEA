@@ -528,16 +528,13 @@ class DEAApp(tk.Tk):
                     self._nav_tab_dot.put("#2e7d32", (_px, _py))
         self.notebook.add(self.tab_navigator, text="NaviTool 2.0",
                           image=self._nav_tab_dot, compound="left")
-        self.tab_linkgen = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_linkgen, text="Link Generator")
-        self.notebook.add(self.tab_overview, text="Calendar & Dashboard")
+        self.notebook.add(self.tab_overview, text="Dashboard")
         self._dashboard_tab_obj = None
         self._navigator_tab_obj = None
-        self._linkgen_tab_obj = None
+        self._linkgen_frame_obj = None
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
         # Ctrl+Tab / Ctrl+Shift+Tab cycle the tabs (Log Today's Work /
-        # NaviTool 2.0 / Link Generator / Calendar & Dashboard) from
-        # anywhere in the
+        # NaviTool 2.0 / Dashboard) from anywhere in the
         # main window - one binding sniffs Shift for direction. Returning
         # "break" stops the keypress dead so focus never jumps elsewhere.
         self.bind("<Control-Tab>", self._cycle_notebook_tab)
@@ -1425,13 +1422,14 @@ class DEAApp(tk.Tk):
             self.my_calendar.refresh()
 
     # ------------------------------------------------------------------
-    # "Calendar & Dashboard" tab
+    # "Dashboard" tab
     # ------------------------------------------------------------------
     def _build_overview_tab(self):
-        """Combined Calendar + Dashboard tab: one scrolling page with
-        the month calendar on top and the efficiency dashboard below it.
-        The calendar (lightweight) builds immediately; the dashboard
-        (matplotlib - slow import) is built lazily on first view."""
+        """Dashboard tab: one scrolling page with the Link Generator on
+        top, the month calendar next, and the efficiency dashboard below.
+        The calendar (lightweight) builds immediately; the generator and
+        dashboard build lazily on first view (see _on_tab_changed) - the
+        dashboard especially, since matplotlib's import is slow."""
         frame = self.tab_overview
         canvas = tk.Canvas(frame, highlightthickness=0)
         vsb = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
@@ -1447,6 +1445,12 @@ class DEAApp(tk.Tk):
         canvas.bind_all("<MouseWheel>", self._overview_wheel, add="+")
         self._overview_canvas = canvas
         self.tab_overview_inner = inner
+
+        # Link Generator section first (built lazily on first view, see
+        # _on_tab_changed), then the calendar, then the efficiency
+        # dashboard - all on one scrolling page.
+        self.overview_linkgen_wrap = ttk.Frame(inner, padding=(4, 4, 4, 0))
+        self.overview_linkgen_wrap.pack(fill="x")
 
         cal_wrap = ttk.Frame(inner, padding=(4, 4, 4, 0))
         cal_wrap.pack(fill="x")
@@ -1529,9 +1533,13 @@ class DEAApp(tk.Tk):
         # Dashboard built lazily, on first view of the combined tab, rather
         # than at startup - matplotlib's import is noticeably slow, so this
         # defers that cost to only the people who actually open this tab,
-        # instead of everyone on every launch.
+        # instead of everyone on every launch. The Link Generator section
+        # on top builds in the same pass (cheap, no heavy imports).
         if self.notebook.select() == str(self.tab_overview) and self._dashboard_tab_obj is None:
             from client.personal_dashboard import PersonalDashboardTab
+            from client.link_generator_tab import LinkGeneratorFrame
+            self._linkgen_frame_obj = LinkGeneratorFrame(self.overview_linkgen_wrap)
+            self._linkgen_frame_obj.pack(fill="x")
             self._dashboard_tab_obj = PersonalDashboardTab(self.overview_dash_wrap, self)
             self._dashboard_tab_obj.pack(fill="x")
             self._dashboard_tab_obj.refresh()
@@ -1542,12 +1550,6 @@ class DEAApp(tk.Tk):
             from client.navigator_tab import Navigator
             self._navigator_tab_obj = Navigator(self.tab_navigator)
             self._navigator_tab_obj.pack(fill="both", expand=True)
-        # Link Generator is cheap (no heavy imports) but still builds
-        # lazily for consistency - first view only.
-        if self.notebook.select() == str(self.tab_linkgen) and self._linkgen_tab_obj is None:
-            from client.link_generator_tab import LinkGeneratorFrame
-            self._linkgen_tab_obj = LinkGeneratorFrame(self.tab_linkgen)
-            self._linkgen_tab_obj.pack(fill="both", expand=True)
         # Green title text while the NaviTool 2.0 tab is current (see
         # _paint_navigator_tab) - cleared on every other tab.
         self._paint_navigator_tab(self.notebook.select() == str(self.tab_navigator))

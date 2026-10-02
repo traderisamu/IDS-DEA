@@ -48,20 +48,32 @@ _DETAIL_RE = re.compile(
     r"(?:\([^)]*\)\s*)?_DETAILS?_(?P<date>[0-9A-Za-z]*)\.pdf$",
     re.IGNORECASE,
 )
+# Maps without the DETAIL keyword ("FBD_MC_MAP05 (S2.91)_REV0Q_081326"):
+# same shape, date directly after the REV. Layout/reference suffixed
+# copies ("..._REV0E_042826_ABY_LAYOUT.pdf") and dateless ones
+# ("..._REV03.pdf") deliberately do NOT match - they can't be ranked.
+_MAP_FILE_RE = re.compile(
+    r"^(?P<prefix>[A-Za-z]+)_(?P<body>.+?)_REV(?P<rev>[0-9A-Z]+)_"
+    r"(?P<date>[0-9A-Za-z]*)\.pdf$",
+    re.IGNORECASE,
+)
 # "BS01_(15th)" must still match (trailing underscore is not a \b word
 # boundary), and hyphenated codes like S2E-A2 need their own pattern.
 _CONN_RE = re.compile(r"(?<![A-Z0-9])([A-Z]{2,}\d{1,3}[A-Z]?)(?![0-9])")
 _CONN_HYPHEN_RE = re.compile(
     r"(?<![A-Z0-9])([A-Z]+\d+[A-Z0-9]*(?:-[A-Z0-9]+)+)(?![0-9A-Z])")
-_MAP_RE = re.compile(r"\bMAP\s*0*(\d{1,3})\b", re.IGNORECASE)
+_MAP_RE = re.compile(r"(?<![A-Z0-9])MAP\s*0*(\d{1,3})\b", re.IGNORECASE)
 
 
 def _rev_key(rev):
-    """'00' -> (0, ''), '0A' -> (0, 'A'), '10' -> (10, '') - orders
-    REV00 < REV0A < REV0B < ... < REV10 as issued revisions grow."""
+    """Orders issued revisions as they actually progress: pure-numeric
+    working REVs (00, 01, ...) first, then the lettered issued series
+    (0A < 0B < ... < 0Q < ...). So REV00 < REV10 < REV0A < REV0B - a
+    dated REV03 never outranks a dated REV0R from the live series."""
     m = re.match(r"(\d*)([A-Za-z]*)$", (rev or "").strip())
     num = int(m.group(1)) if m and m.group(1) else 0
-    return (num, (m.group(2) if m else "").upper())
+    letters = (m.group(2) if m else "").upper()
+    return (1 if letters else 0, num, letters)
 
 
 def _date_key(date):
@@ -83,20 +95,26 @@ def _valid_detail_date(date):
 
 
 def parse_detail_name(filename):
-    """SPS_BS02_(15th) (A)_REV0C_DETAIL_100126.pdf ->
-    {'prefix': 'SPS', 'rev': '0C', 'date': '100126',
-     'key': ((0, 'C'), (26, 10, 1))}. None when the name isn't an
-    issued detail file (wrong shape, or a not-sent placeholder date)."""
+    """SPS_BS02_(15th) (A)_REV0C_DETAIL_100126.pdf (or an FBD-style map
+    like FBD_MC_MAP05 (S2.91)_REV0Q_081326.pdf, no DETAIL keyword) ->
+    {'prefix', 'rev', 'date', 'key'}. None when the name isn't a
+    rankable issued file (wrong shape, or a not-sent placeholder date
+    like XXXX / 04XX26 / 000000)."""
     m = _DETAIL_RE.match(filename or "")
-    if not m:
+    body, rev, date = None, None, None
+    if m:
+        body, rev, date = m.group("body"), m.group("rev").upper(), m.group("date")
+    else:
+        m = _MAP_FILE_RE.match(filename or "")
+        if m and _MAP_RE.search(m.group("body") or ""):
+            body, rev, date = m.group("body"), m.group("rev").upper(), m.group("date")
+    if body is None:
         return None
-    rev = m.group("rev").upper()
-    date = m.group("date")
     if not _valid_detail_date(date):
         return None
     return {
         "prefix": m.group("prefix").upper(),
-        "body": m.group("body"),
+        "body": body,
         "rev": rev,
         "date": date,
         "key": (_rev_key(rev), _date_key(date)),
@@ -593,7 +611,8 @@ class LatestDetailsTab(ttk.Frame):
         hint = self._tlabel(self, padding=(10, 2, 10, 0), font=("Segoe UI", 8),
                                 foreground="#68727d", wraplength=900, justify="left",
                          text="Newest issued detail + map per connection for the job "
-                              "selected in NaviTool 2.0. Click a file name to open the PDF.")
+                              "selected in NaviTool 2.0 - one tab per family, maps "
+                              "in their own rows. Click a file name to open the PDF.")
         hint.pack(fill="x")
 
         prog = ttk.Frame(self, padding=(10, 2, 10, 0))
@@ -777,62 +796,73 @@ class LatestDetailsTab(ttk.Frame):
                           "package.".format(job, SIDE_LABELS[side]))
             return
         show_maps = side != "MISC"  # misc (stairs/rails/ladders/gates/EC) has no maps
-        headers = ["Connection", "Latest calc detail"]
-        if show_maps:
-            headers.append("Latest map")
-        headers.append("")
+        nb = ttk.Notebook(self.body)
+        nb.pack(fill="x", padx=4, pady=(2, 6))
+        fams = sorted(rows, key=str.lower)
+        # OTHER collects the unplaceable leftovers - always the last tab.
+        fams = [f for f in fams if f != "OTHER"]
+        if "OTHER" in rows:
+            fams.append("OTHER")
+        for family in fams:
+            page = ttk.Frame(nb)
+            if self._ebg is not None:
+                page.configure(style="App.TFrame")
+            nb.add(page, text=family)
+            self._paint_family(page, job, rows[family], show_maps)
+        self._fam_nb = nb
+
+    def _paint_family(self, page, job, fdata, show_maps):
+        """One family tab: connection calc rows, then a MAPS block with
+        one row per map (structural only). No map column anywhere."""
+        headers = ("Connection", "Latest calc detail", "")
         for col, text in enumerate(headers):
-            self._tlabel(self.body, text=text,
+            self._tlabel(page, text=text,
                          font=("Segoe UI", 9, "bold")).grid(
                              row=0, column=col, sticky="w", padx=8, pady=(2, 6))
-        map_col = 2 if show_maps else None
-        folder_col = 3 if show_maps else 2
-        ttk.Separator(self.body, orient="horizontal").grid(
-            row=1, column=0, columnspan=folder_col + 1, sticky="ew", padx=4)
-        row_idx = 2
-        for family in sorted(rows, key=str.lower):
-            fdata = rows[family]
-            self._tlabel(self.body, text="\u2014 {} \u2014".format(family),
-                         font=("Segoe UI", 10, "bold"),
-                         foreground="#20252b").grid(row=row_idx, column=0,
-                                                    columnspan=folder_col + 1,
-                                                    sticky="w", padx=8, pady=(10, 2))
-            row_idx += 1
-            calc_groups = sorted(
-                (g for g, d in fdata.items() if d["calc"]), key=str.lower)
-            map_only = sorted(
-                (g for g, d in fdata.items() if not d["calc"] and d["map"]),
-                key=str.lower)
-            for group in calc_groups + map_only:
-                data = fdata[group]
-                self._tlabel(self.body, text=group,
-                             font=("Segoe UI", 10, "bold")).grid(
-                                 row=row_idx, column=0, sticky="nw", padx=8, pady=6)
-                self._link_cell(row_idx, 1, data["calc"], job)
-                if show_maps:
-                    self._link_cell(row_idx, map_col, data["map"], job)
-                rel = data["folder"]
-                if rel:
-                    ttk.Button(self.body, text="Open folder",
-                               command=lambda r=rel: open_target(
-                                   os.path.join(JOB_ROOT, job, r))).grid(
-                                       row=row_idx, column=folder_col, sticky="nw",
-                                       padx=8, pady=4)
-                else:
-                    self._tlabel(self.body, text="\u2014",
-                                 foreground="#9aa0a6").grid(row=row_idx,
-                                                            column=folder_col,
-                                                            sticky="w", padx=8)
-                row_idx += 1
-        self.body.grid_columnconfigure(1, weight=1)
+        row_idx = 1
+        calc_groups = sorted(
+            (g for g, d in fdata.items() if d["calc"]), key=str.lower)
+        for group in calc_groups:
+            row_idx = self._paint_row(page, job, row_idx, group, fdata[group]["calc"],
+                                      fdata[group]["folder"])
         if show_maps:
-            self.body.grid_columnconfigure(2, weight=1)
+            map_groups = sorted(
+                (g for g, d in fdata.items() if d["map"]), key=str.lower)
+            if map_groups:
+                self._tlabel(page, text="\u2014 MAPS \u2014",
+                             font=("Segoe UI", 9, "bold"),
+                             foreground="#20252b").grid(row=row_idx, column=0,
+                                                        columnspan=3, sticky="w",
+                                                        padx=8, pady=(10, 2))
+                row_idx += 1
+                for group in map_groups:
+                    row_idx = self._paint_row(page, job, row_idx, group,
+                                              fdata[group]["map"],
+                                              fdata[group]["folder"])
+        page.grid_columnconfigure(1, weight=1)
 
-    def _link_cell(self, row, col, paths, job):
-        if self._ebg is None:
-            cell = ttk.Frame(self.body)
+    def _paint_row(self, page, job, row_idx, group, paths, folder_rel):
+        self._tlabel(page, text=group,
+                     font=("Segoe UI", 10, "bold")).grid(
+                         row=row_idx, column=0, sticky="nw", padx=8, pady=6)
+        self._link_cell(page, row_idx, 1, paths, job)
+        if folder_rel:
+            ttk.Button(page, text="Open folder",
+                       command=lambda r=folder_rel: open_target(
+                           os.path.join(JOB_ROOT, job, r))).grid(
+                               row=row_idx, column=2, sticky="nw",
+                               padx=8, pady=4)
         else:
-            cell = ttk.Frame(self.body, style="App.TFrame")
+            self._tlabel(page, text="\u2014",
+                         foreground="#9aa0a6").grid(row=row_idx, column=2,
+                                                    sticky="w", padx=8)
+        return row_idx + 1
+
+    def _link_cell(self, parent, row, col, paths, job):
+        if self._ebg is None:
+            cell = ttk.Frame(parent)
+        else:
+            cell = ttk.Frame(parent, style="App.TFrame")
         cell.grid(row=row, column=col, sticky="nw", padx=8, pady=4)
         if not paths:
             self._tlabel(cell, text="\u2014", foreground="#9aa0a6").pack(anchor="w")
