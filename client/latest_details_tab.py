@@ -25,6 +25,7 @@ import os
 import re
 import threading
 import tkinter as tk
+from concurrent.futures import ThreadPoolExecutor
 from tkinter import ttk
 
 from client.navigator_tab import (
@@ -35,6 +36,9 @@ from client.navigator_tab import (
     load_settings as _nav_load_settings,
     save_settings as _nav_save_settings,
 )
+from shared.applog import get_logger
+
+_log = get_logger(__name__)
 
 SIDES = ("STRUCTURAL", "MISC")
 SIDE_LABELS = {"STRUCTURAL": "Structural", "MISC": "Miscellaneous"}
@@ -121,20 +125,43 @@ def parse_detail_name(filename):
     }
 
 
-def _iter_files(folder, top_only=True):
+def _pruned_dir(name):
+    """Subtrees that can never hold a rankable issued detail: sent-calc
+    bundles (dateless REV00-03), review areas, models/backups, reference
+    and void drops. Verified against Trinity/JPI/FBD - the winners test
+    guards this list (any miss shows up as a diff)."""
+    u = (name or "").upper()
+    if u in ("SENT CALCS", "TO EQA", "MODEL", "BACKUP", "CAD", "SK", "VOID",
+             "REF", "RISA INPUT", "RISA OUTPUT", "CAD+SKETCH", "OTHER RUNS",
+             "CBFEM"):
+        return True
+    if u.startswith(("BACKUP", "RISA", "VOID", "CHECKING", "FULL CALC",
+                     "MUSTAFA")):
+        return True
+    return False
+
+
+def _walk_pdfs(folder, max_depth):
+    """Yield pdf paths under folder up to max_depth below it (0 = top
+    files only), never descending into _pruned_dir() subtrees."""
     try:
         with os.scandir(folder) as it:
             entries = sorted(it, key=lambda e: e.name.lower())
     except OSError:
         return
+    subdirs = []
     for e in entries:
         try:
             if e.is_file():
-                yield e.path
-            elif not top_only and e.is_dir():
-                yield from _iter_files(e.path, top_only=False)
+                if e.name.lower().endswith(".pdf"):
+                    yield e.path
+            elif e.is_dir() and max_depth > 0 and not _pruned_dir(e.name):
+                subdirs.append(e.path)
         except OSError:
             continue
+    if max_depth > 0:
+        for sub in subdirs:
+            yield from _walk_pdfs(sub, max_depth - 1)
 
 
 def _map_group(body):
@@ -172,12 +199,85 @@ def _stem(word):
     return s
 
 
+# "STAIR 02" / "Stair 2" / "WEST STAIR 2" -> canonical "STAIR 2".
+_STAIR_RE = re.compile(r"STAIR\s*0*(\d+)", re.IGNORECASE)
+# S-shorthand in folder/package names only ("S1", "S2", "EC10 S1") - never
+# bare sheet tags like "(S2.91)", guarded by the lookahead.
+_S_SHORT_RE = re.compile(r"\bS\s*-?\s*0*(\d+)\b(?!\s*\.\d)")
+
+
+def _stair_token(name):
+    """Canonical stair designator in a file/folder/package name, or None."""
+    m = _STAIR_RE.search(name or "")
+    if m:
+        return "STAIR %d" % int(m.group(1))
+    return None
+
+
+def _stair_context(*names):
+    """First stair designator across names (full token, else S-shorthand)."""
+    for nm in names:
+        if not nm:
+            continue
+        m = _STAIR_RE.search(nm)
+        if m:
+            return "STAIR %d" % int(m.group(1))
+        m = _S_SHORT_RE.search(nm)
+        if m:
+            return "STAIR %d" % int(m.group(1))
+    return None
+
+
+def _stair_name(name):
+    """Stair designator in a folder/package name (full or S-shorthand)."""
+    return _stair_context(name)
+
+
+def _loose_group(side, conn, sub, body):
+    """Group for issued files sitting loose in a conn folder (sub=None),
+    a kid folder, or a _SENT TO DETAILER subtree (sub = kid name)."""
+    if _MAP_RE.search(body or ""):
+        return _map_group(body) or sub or conn
+    st = _stair_token(body or "")
+    if st is not None:
+        return st
+    tok = _conn_group(body or "")
+    if tok is not None:
+        if side == "MISC" and _token_alpha(tok) == "EC":
+            ctx = _stair_name(sub) if sub else None
+            return "{} {}".format(ctx, tok) if ctx else tok
+        return tok
+    if side == "MISC" and sub:
+        return _strip_pkg_date(sub)
+    return sub or conn
+
+
+def _subpath(task_folder, path):
+    """First path part of path's directory relative to task_folder
+    (None when the file sits directly in it)."""
+    try:
+        rel = os.path.relpath(os.path.dirname(path), task_folder)
+    except ValueError:
+        return None
+    if rel in (".", ""):
+        return None
+    return rel.split(os.sep)[0]
+
+
+def _strip_pkg_date(name):
+    """'100126 - Stair 2' -> 'Stair 2' (dated package/folder prefixes)."""
+    return re.sub(r"^\d{6}\s*-\s*", "", name or "").strip() or name
+
+
 def _pkg_mentions(pkg_name, conn):
     """Singular/plural/case-tolerant package attribution: STAIRS matches
-    'West Stair 2', RAILINGS matches 'Rail', BS matches 'BS Calc Details'."""
+    'West Stair 2' (and S1/S2/S3 shorthand), RAILINGS matches 'Rail',
+    BS matches 'BS Calc Details'."""
     target = _stem(conn)
     if len(target) < 2:
         return False
+    if target == "stair" and _S_SHORT_RE.search(pkg_name or ""):
+        return True
     for word in re.findall(r"[A-Za-z]+", pkg_name or ""):
         w = _stem(word)
         if len(w) < 2:
@@ -223,9 +323,16 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
     can drive a determinate bar; cancel() returning True aborts with
     None (the caller keeps whatever it was showing before)."""
     code = (code or "").upper()
-    conns = _list_conns(job_base, code, side)
+    _all_conns = _list_conns(job_base, code, side)
     other_side = "MISC" if side == "STRUCTURAL" else "STRUCTURAL"
     other_conns = _list_conns(job_base, code, other_side)
+    if side == "MISC":
+        # Misc calcs are only Rails / Stairs / Ladders / Gates - anything
+        # else parked under MISC (2M2W, MC, M2F, ...) is not misc work.
+        conns = [c for c in _all_conns if _misc_family(c) is not None]
+    else:
+        # No stair calcs under Structural - those live on the misc side.
+        conns = [c for c in _all_conns if "stair" not in c.lower()]
     seen_maps = {}  # MAPnn -> conn, from working MAPS folders (disambiguates packages)
 
     def _report(phase, done, total):
@@ -269,10 +376,10 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
             return "EC"
         return conn
 
-    plans = []  # (folder, top_only, is_pkg, folder_rel, resolve)
+    plans = []  # (folder, depth, is_pkg, resolve)
 
-    def _add(folder, top_only, is_pkg, folder_rel, resolve):
-        plans.append((folder, top_only, is_pkg, folder_rel, resolve))
+    def _add(folder, depth, is_pkg, resolve):
+        plans.append((folder, depth, is_pkg, resolve))
 
     side_root = os.path.join(job_base, "{}_CALCS".format(code), "MATHCAD CALCS", side)
     for conn in conns:
@@ -281,57 +388,50 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
         # Open-folder buttons - rebuilt from parts so temp-tree scans in
         # tests produce sane rels too.
         tail = os.path.join("{}_CALCS".format(code), "MATHCAD CALCS", side, conn)
-        # CALCS\\<NN>\\*.pdf groups by the NN folder; loose files group
-        # under the connection itself.
-        calcs_dir = os.path.join(conn_abs, "CALCS")
-        if os.path.isdir(calcs_dir):
-            _add(calcs_dir, True, False, os.path.join(tail, "CALCS"),
-                 lambda i, _p, c=conn: (_work_family(i, c), c, "calc"))
-            try:
-                subs = sorted(
-                    (e.name for e in os.scandir(calcs_dir) if e.is_dir()),
-                    key=str.lower,
-                )
-            except OSError:
-                subs = []
-            for sub in subs:
-                _add(os.path.join(calcs_dir, sub), True, False,
-                     os.path.join(tail, "CALCS", sub),
-                     lambda i, _p, c=conn, s=sub: (_work_family(i, c), s, "calc"))
-        # MAPS\\*.pdf (top level only - ref\\ is reference material).
-        def _maps_resolve(info, _path, c=conn):
-            mg = _map_group(info["body"]) or c
-            if mg != c:
-                seen_maps.setdefault(mg, c)
-            return (_work_family(info, c), mg, "map")
 
-        _add(os.path.join(conn_abs, "MAPS"), True, False,
-             os.path.join(tail, "MAPS"), _maps_resolve)
-        # Anything else issued sitting directly under the connection
-        # folder, plus one level of misc-style subfolders (East Stair 1)
-        # and the _SENT TO DETAILER drops.
-        _add(conn_abs, True, False, tail,
-             lambda i, _p, c=conn: (_work_family(i, c), _conn_group(i["body"]) or c,
-                                   _kind(i)))
-        try:
-            kids = sorted(
-                (e.name for e in os.scandir(conn_abs) if e.is_dir()),
-                key=str.lower,
-            )
-        except OSError:
-            kids = []
-        for kid in kids:
-            if kid.upper() in _SKIP_DIRS or kid == "_SENT TO DETAILER":
-                continue
-            _add(os.path.join(conn_abs, kid), True, False,
-                 os.path.join(tail, kid),
-                 lambda i, _p, c=conn, k=kid: (_work_family(i, c),
-                                               _conn_group(i["body"]) or k, _kind(i)))
-        sent = os.path.join(conn_abs, "_SENT TO DETAILER")
-        if os.path.isdir(sent):
-            _add(sent, False, False, os.path.join(tail, "_SENT TO DETAILER"),
-                 lambda i, _p, c=conn: (_work_family(i, c),
-                                        _conn_group(i["body"]) or c, _kind(i)))
+        def _work_resolve(info, path, _conn=conn, _tail=tail):
+            """Classify one working-folder file by its path relative to
+            the connection folder (one walk per conn, not six)."""
+            try:
+                rel = os.path.relpath(path, os.path.join(side_root, _conn))
+            except ValueError:
+                return None
+            parts = rel.split(os.sep)
+            body = info["body"]
+            fam = _work_family(info, _conn)
+            if len(parts) == 1:
+                return (fam, _loose_group(side, _conn, None, body),
+                        _kind(info), _tail)
+            head = parts[0]
+            if head == "CALCS":
+                # CALCS\\<NN>\\file groups by NN; loose CALCS files by conn.
+                if len(parts) == 2:
+                    return (fam, _conn, "calc", os.path.join(_tail, "CALCS"))
+                if len(parts) == 3:
+                    return (fam, parts[1], "calc",
+                            os.path.join(_tail, "CALCS", parts[1]))
+                return None
+            if head == "MAPS":
+                # Top level only - ref/ is reference material (also pruned).
+                if len(parts) == 2:
+                    mg = _map_group(body) or _conn
+                    if mg != _conn:
+                        seen_maps.setdefault(mg, _conn)
+                    return (fam, mg, "map", os.path.join(_tail, "MAPS"))
+                return None
+            if head == "_SENT TO DETAILER":
+                sub = parts[1] if len(parts) > 2 else None
+                return (fam, _loose_group(side, _conn, sub, body),
+                        _kind(info), os.path.join(_tail, "_SENT TO DETAILER"))
+            if head.upper() in _SKIP_DIRS:
+                return None
+            # Misc-style kid folders (East Stair 1) and one level below.
+            if len(parts) in (2, 3):
+                return (fam, _loose_group(side, _conn, head, body),
+                        _kind(info), os.path.join(_tail, head))
+            return None
+
+        _add(conn_abs, 3, False, _work_resolve)
 
     # Dated submittal packages - these can hold newer revisions than the
     # working folders, so they merge into the same groups. A package file
@@ -354,53 +454,115 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
         mentioned = [c for c in conns if _pkg_mentions(pkg, c)]
         mentioned_other = [c for c in other_conns if _pkg_mentions(pkg, c)]
 
-        def _pkg_resolve(info, path, _abs=pkg_abs,
+        def _pkg_resolve(info, path, _pkg=pkg, _tail=pkg_tail,
                          _men=list(mentioned), _meno=list(mentioned_other)):
             body = info["body"]
             kind = "map" if _MAP_RE.search(body) else "calc"
+            parent = os.path.basename(os.path.dirname(path))
+            stair = _stair_context(body, parent, _pkg)
             if _MAP_RE.search(body):
                 grp = _map_group(body)
                 if grp in seen_maps:
-                    return (seen_maps[grp], grp, kind)
+                    return (seen_maps[grp], grp, kind, _tail)
+                if stair is not None and side == "MISC" \
+                        and not (_meno and not _men):
+                    return ("STAIRS", grp, kind, _tail)
                 if _men and not _meno:
-                    return (_men[0] if len(_men) == 1 else "OTHER", grp, kind)
+                    return (_men[0] if len(_men) == 1 else "OTHER", grp, kind,
+                            _tail)
                 if _meno and not _men:
                     return None
-                return ("OTHER", grp, kind)
+                return ("OTHER", grp, kind, _tail)
+            stok = _stair_token(body)
+            if stok is not None:
+                # "STAIR 02" belongs to whoever owns STAIRS (misc) -
+                # nowhere on the structural side.
+                where, who = _owning_conn("STAIR")
+                if where != "mine":
+                    return None
+                return (who, stok, kind, _tail)
             tok = _conn_group(body)
             if tok is None:
                 if _meno and not _men:
                     return None  # the other side's package - not ours
-                parent = os.path.basename(os.path.dirname(path))
                 if side == "MISC" and parent:
-                    return (_misc_family(parent) or "OTHER", parent, kind)
-                return ("OTHER", "(submittal)", kind)
+                    return (_misc_family(parent) or "OTHER",
+                            _strip_pkg_date(parent), kind, _tail)
+                return ("OTHER", "(submittal)", kind, _tail)
             alpha = _token_alpha(tok)
             if alpha == "EC":
-                return (("EC", tok, kind) if side == "MISC" else None)
+                if side != "MISC":
+                    return None
+                # An EC1 under Stair 1 is a different calc from an EC1
+                # under Stair 2 - carry the stair context in the group
+                # ("EC EC3" would double up, so a bare EC context is dropped).
+                ctx = stair or _misc_family(parent) or None
+                if ctx == "EC":
+                    ctx = None
+                return ("EC", "{} {}".format(ctx, tok) if ctx else tok, kind,
+                        _tail)
             where, who = _owning_conn(alpha)
             if where == "mine":
-                return (who, tok, kind)
+                return (who, tok, kind, _tail)
             if where == "theirs":
                 return None
             if _men and not _meno:
-                return (_men[0] if len(_men) == 1 else "OTHER", tok, kind)
+                return (_men[0] if len(_men) == 1 else "OTHER", tok, kind,
+                        _tail)
             if _meno and not _men:
                 return None
-            return ("OTHER", tok, kind)
+            return ("OTHER", tok, kind, _tail)
 
-        _add(pkg_abs, False, True, pkg_tail, _pkg_resolve)
+        _add(pkg_abs, 4, True, _pkg_resolve)
 
-    # ---- phase 1: enumerate (fast scandir walk, no parsing) ----
-    files = []  # (path, folder_rel, is_pkg, resolve)
-    for idx, (folder, top_only, is_pkg, folder_rel, resolve) in enumerate(plans):
-        if _aborted():
-            return None
-        if os.path.isdir(folder):
-            for path in _iter_files(folder, top_only=top_only):
-                if path.lower().endswith(".pdf"):
-                    files.append((path, folder_rel, is_pkg, resolve))
-        _report("Listing files…", idx + 1, len(plans))
+    # ---- phase 1: enumerate in breadth-first rounds (one task per
+    # directory, balanced across workers - a single deep tree like OLD/
+    # can no longer serialize the phase on one worker) ----
+    files = []  # (path, is_pkg, resolve)
+    found = [0]
+    _found_lock = threading.Lock()
+
+    def _run_dir(task):
+        folder, depth, is_pkg, resolve = task
+        local = []
+        children = []
+        if _aborted() or not os.path.isdir(folder):
+            return local, children
+        for path in _walk_pdfs(folder, 0):
+            local.append((path, is_pkg, resolve))
+            with _found_lock:
+                found[0] += 1
+                n = found[0]
+            if n % 50 == 0:
+                _report("Listing files… (%d found)" % n, 0, None)
+        if depth > 0 and not _aborted():
+            try:
+                with os.scandir(folder) as it:
+                    kids = sorted((e.name for e in it if e.is_dir()),
+                                  key=str.lower)
+            except OSError:
+                kids = []
+            for k in kids:
+                if not _pruned_dir(k):
+                    children.append((os.path.join(folder, k), depth - 1,
+                                     is_pkg, resolve))
+        return local, children
+
+    _report("Listing files…", 0, None)
+    pending = list(plans)
+    with ThreadPoolExecutor(max_workers=min(8, 64)) as _ex:
+        while pending:
+            if _aborted():
+                return None
+            results = list(_ex.map(_run_dir, pending))
+            pending = []
+            for _local, _kids in results:
+                for _f in _local:
+                    files.append(_f)
+                pending.extend(_kids)
+    if _aborted():
+        return None
+    _report("Listing files… (%d found)" % len(files), 1, 1)
 
     # ---- phase 2: parse & classify (working first, then packages,
     # so package maps inherit their working MAPS family) ----
@@ -409,7 +571,7 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
 
     def _process(chunk, phase):
         total = len(chunk)
-        for i, (path, folder_rel, _pkg, resolve) in enumerate(chunk):
+        for i, (path, _pkg, resolve) in enumerate(chunk):
             if _aborted():
                 return False
             if i % 10 == 0 or i + 1 == total:
@@ -423,7 +585,7 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
             got = resolve(info, path)
             if got is None:
                 continue
-            family, group, kind = got
+            family, group, kind, folder_rel = got
             seen_names.add(base)
             fam = groups.setdefault(family, {})
             g = fam.setdefault(group, {"calc": [], "map": [], "folder": folder_rel})
@@ -432,8 +594,8 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
             g[kind].append((info["key"], path))
         return True
 
-    working = [f for f in files if not f[2]]
-    pkgs = [f for f in files if f[2]]
+    working = [f for f in files if not f[1]]
+    pkgs = [f for f in files if f[1]]
     if not _process(working, "Reading working folders…"):
         return None
     if not _process(pkgs, "Reading submittal packages…"):
@@ -517,6 +679,7 @@ def scan_latest_details(job_name, side, progress=None, cancel=None,
     try:
         rows = scan_job_folders(base, code, side, progress, cancel)
     except Exception:
+        _log.exception("Latest Details scan failed for %s (%s)", job_name, side)
         return {}
     if rows is None:
         return None
@@ -725,9 +888,14 @@ class LatestDetailsTab(ttk.Frame):
             if visible:
                 self.prog_bar.pack(side="right", padx=(6, 0))
                 self.cancel_btn.pack(side="right")
+                self.prog_bar.configure(mode="determinate")
                 self.prog_bar["value"] = 0
                 self.prog_label.config(text="Starting…")
             else:
+                try:
+                    self.prog_bar.stop()
+                except tk.TclError:
+                    pass
                 self.prog_bar.pack_forget()
                 self.cancel_btn.pack_forget()
                 self.prog_label.config(text="")
@@ -739,6 +907,20 @@ class LatestDetailsTab(ttk.Frame):
             return
         try:
             import time as _time
+            if total is None:
+                # Listing phase: total unknown - pulse until phase 2.
+                self.prog_bar.configure(mode="indeterminate")
+                try:
+                    self.prog_bar.start(50)
+                except tk.TclError:
+                    pass
+                self.prog_label.config(text=phase)
+                return
+            try:
+                self.prog_bar.stop()
+            except tk.TclError:
+                pass
+            self.prog_bar.configure(mode="determinate")
             now = _time.monotonic()
             if done < total and now - self._prog_last < 0.1:
                 return

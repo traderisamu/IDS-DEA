@@ -42,15 +42,17 @@ def _exists(base, rel):
     return bool(rel) and os.path.isdir(os.path.join(base, rel))
 
 
-def _folder_menu(base, rel, depth=0, max_depth=3):
+def _folder_menu(base, rel, depth=0, max_depth=3, label=None):
     """Nested menu entries for one folder: [(label, rel-or-children), ...].
 
-    Every level starts with an "open this folder" command - tk cascade
-    headers can't run commands themselves, so this keeps each folder
-    clickable - followed by one cascade per subfolder, down to
-    max_depth. A folder with no subfolders of its own collapses to a
-    plain open-folder command (a bare rel string)."""
-    entries = [("\U0001F4C1 Open this folder", rel)]
+    Every level starts with the folder's own name as an open-folder
+    command (tk cascade headers can't run commands themselves, so this
+    keeps each folder clickable: BS, BS > CALCS, BS > CALCS > BS01...),
+    followed by one cascade per subfolder, down to max_depth. A folder
+    with no subfolders of its own collapses to a plain open-folder
+    command (a bare rel string)."""
+    own = label if label is not None else (os.path.basename(rel.rstrip("\\")) or rel)
+    entries = [(own, rel)]
     if depth >= max_depth:
         return entries
     kids = _dir_entries(base, rel)
@@ -74,6 +76,14 @@ def _dir_entries(base, rel):
     except OSError:
         pass
     return sorted(out, key=str.lower)
+
+
+def _cascade_or_open(base, rel, label=None):
+    """_folder_menu() when the folder has children, else a bare rel that
+    renders as a plain open-folder command."""
+    if _dir_entries(base, rel):
+        return _folder_menu(base, rel, label=label)
+    return rel
 
 
 def build_job_sections(job_name):
@@ -145,28 +155,17 @@ def build_job_sections(job_name):
                         "rel": schemes, "menu": None})
     rfi = sc("RFI")
     if _exists(base, rfi):
-        menu = []
+        menu = [("RFI", rfi), ("-", None)]
         for sub in ("RFI SENT", "RFI RESPONSE"):
-            if _exists(base, rfi + "\\" + sub):
-                menu.append((sub, rfi + "\\" + sub))
-        if menu:
-            initial.append({"kind": "dropdown", "label": "RFI", "icon": "\U0001F4E9", "menu": menu})
-        else:
-            initial.append({"kind": "button", "label": "RFI", "icon": "\U0001F4E9",
-                            "rel": rfi, "menu": None})
+            root = rfi + "\\" + sub
+            if _exists(base, root):
+                menu.append((sub, _cascade_or_open(base, root, sub)))
+        initial.append({"kind": "dropdown", "label": "RFI", "icon": "\U0001F4E9", "menu": menu})
     sk = sc("SKETCHES")
     if _exists(base, sk):
-        menu = []
-        try:
-            with os.scandir(os.path.join(base, sk)) as it:
-                for entry in it:
-                    if entry.is_dir():
-                        menu.append((entry.name, sk + "\\" + entry.name))
-        except OSError:
-            pass
-        menu = sorted(menu, key=lambda m: m[0].lower())
-        if menu:
-            initial.append({"kind": "dropdown", "label": "SKETCHES", "icon": "\u270F", "menu": menu})
+        if _dir_entries(base, sk):
+            initial.append({"kind": "dropdown", "label": "SKETCHES", "icon": "\u270F",
+                            "menu": _folder_menu(base, sk, label="SKETCHES")})
         else:
             initial.append({"kind": "button", "label": "SKETCHES", "icon": "\u270F",
                             "rel": sk, "menu": None})
@@ -180,20 +179,15 @@ def build_job_sections(job_name):
                           "rel": sc("SUBMITTAL"), "menu": None})
     det_root = sc("DETAILING")
     if _exists(base, det_root):
-        menu = []
+        menu = [("DETAILING", det_root), ("-", None)]
         for sub in ("SHOP DRAWINGS", "LAYOUT"):
             root = det_root + "\\" + sub
             if _exists(base, root):
-                menu.append((sub, root))
-        dc = det_root + "\\SHOP DRAWINGS\\DESIGN COMMENTS"
-        if _exists(base, dc):
-            menu.insert(1, ("DESIGN COMMENTS", dc))
-        if menu:
-            submittal.append({"kind": "dropdown", "label": "DETAILING",
-                              "icon": "\U0001F3D7", "menu": menu})
-        else:
-            submittal.append({"kind": "button", "label": "DETAILING", "icon": "\U0001F3D7",
-                              "rel": det_root, "menu": None})
+                # DESIGN COMMENTS (and For Approval / Seq XX levels) live
+                # under SHOP DRAWINGS and surface through the recursion.
+                menu.append((sub, _cascade_or_open(base, root, sub)))
+        submittal.append({"kind": "dropdown", "label": "DETAILING",
+                          "icon": "\U0001F3D7", "menu": menu})
     if submittal:
         sections.append(("SUBMITTAL", submittal))
 
@@ -205,8 +199,17 @@ def build_job_sections(job_name):
     cd_root = sc("CHANGE DOCUMENTS")
     if _exists(base, cd_root):
         cd_target = cd_root + "\\APPROVAL RETURNS"
-        fab.append({"kind": "button", "label": "CD", "icon": "\U0001F4DD",
-                    "rel": cd_target if _exists(base, cd_target) else cd_root, "menu": None})
+        if _exists(base, cd_target) and _dir_entries(base, cd_target):
+            menu = [("CD", cd_target), ("-", None)]
+            for name in _dir_entries(base, cd_target):
+                rel = cd_target + "\\" + name
+                menu.append((name, _cascade_or_open(base, rel, name)))
+            fab.append({"kind": "dropdown", "label": "CD", "icon": "\U0001F4DD",
+                        "menu": menu})
+        else:
+            fab.append({"kind": "button", "label": "CD", "icon": "\U0001F4DD",
+                        "rel": cd_target if _exists(base, cd_target) else cd_root,
+                        "menu": None})
     if fab:
         sections.append(("FABRICATION", fab))
 
@@ -215,7 +218,7 @@ def build_job_sections(job_name):
 
 DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "IDS", "Navigator")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
-SECTION_CACHE_FILE = os.path.join(DATA_DIR, "section_cache_v2.json")
+SECTION_CACHE_FILE = os.path.join(DATA_DIR, "section_cache_v3.json")
 
 
 def load_section_cache():
@@ -814,14 +817,15 @@ class Navigator(tk.Frame):
 
     def _show_placeholder(self, text="Select a job from the left."):
         self._clear_content()
-        _nb, page_folders, page_latest = self._build_sub_notebook()
+        _nb, page_folders, page_latest, page_quick = self._build_sub_notebook()
         ttk.Label(page_folders, text=text, style="Sub.TLabel",
                   font=("Segoe UI", 11)).grid(row=0, column=0, columnspan=3, pady=(30, 10))
-        # No job selected: the folders page shows the quick links, and the
-        # Latest page explains itself (the panel guides job selection).
+        # No job selected: the folders page is just the placeholder, quick
+        # links live on their own tab, and the Latest page explains itself
+        # (the panel guides job selection).
         all_links = get_admin_links() + self.settings.get("links", [])
         width = max([len(l["name"]) + 3 for l in all_links] + [1]) + 2
-        self._render_quick_links(page_folders, width, 1)
+        self._render_quick_links(page_quick, width, 0)
         self._mount_latest_panel(page_latest)
 
     # ---------- main content ----------
@@ -968,21 +972,23 @@ class Navigator(tk.Frame):
             pass
 
     def _build_sub_notebook(self):
-        """Job Folders | Latest Details tabs hosting a render. Returns
-        (notebook, folders_page, latest_page)."""
+        """Job Folders | Latest Details | Quick Links tabs hosting a
+        render. Returns (notebook, folders_page, latest_page, links_page)."""
         nb = ttk.Notebook(self.content)
         nb.grid(row=0, column=0, columnspan=3, sticky="nsew")
         self._sub_nb = nb
         page_folders = ttk.Frame(nb, style="App.TFrame")
         page_latest = ttk.Frame(nb, style="App.TFrame")
+        page_quick = ttk.Frame(nb, style="App.TFrame")
         nb.add(page_folders, text="Job Folders")
         nb.add(page_latest, text="Latest Details")
+        nb.add(page_quick, text="Quick Links")
         self._page_latest = page_latest
-        for pg in (page_folders, page_latest):
+        for pg in (page_folders, page_latest, page_quick):
             pg.grid_columnconfigure(0, weight=1, uniform="btn")
             pg.grid_columnconfigure(1, weight=1, uniform="btn")
             pg.grid_columnconfigure(2, weight=1, uniform="btn")
-        return nb, page_folders, page_latest
+        return nb, page_folders, page_latest, page_quick
 
     def _mount_latest_panel(self, page):
         """Latest Details panel on the sub-notebook's second page. Lazy
@@ -1008,7 +1014,7 @@ class Navigator(tk.Frame):
         width += 2
 
         row = 0
-        _nb, page_folders, page_latest = self._build_sub_notebook()
+        _nb, page_folders, page_latest, page_quick = self._build_sub_notebook()
         # Stage groups keep their collapsible arrow-toggle, but the toggle
         # shows ONLY the arrow - no title text. Only QUICK LINKS keeps a
         # titled header (see _render_quick_links). Each group still gets
@@ -1032,7 +1038,7 @@ class Navigator(tk.Frame):
             row += 1
 
         all_links = get_admin_links() + self.settings.get("links", [])
-        self._render_quick_links(page_folders, width, row)
+        self._render_quick_links(page_quick, width, 0)
         self._mount_latest_panel(page_latest)
 
     def _render_quick_links(self, host, width, row):

@@ -278,27 +278,32 @@ Hours, and Remarks, then **Add Entry**.
   7:30/12-1 default on any other PC. The app's default window size is
   tall enough to show all of this without resizing.
 
-**🟢 NaviTool 2.0 tab** (2nd tab) — two tabs inside: **Job Folders**
-(job folder shortcuts, quick links) and **Latest Details**. Connection
-folders open one level deeper now: e.g. BS › CALCS › BS01, BS › MAPS,
-STAIRS › STAIR 1 — every level stays clickable (each menu starts with
-an "Open this folder" item) so you can open just BS or BS › CALCS when
-that's all you want. The **Latest Details...** button (beside Add to
-Favorites) jumps to the Latest Details tab.
+**🟢 NaviTool 2.0 tab** (2nd tab) — three tabs inside: **Job
+Folders** (job folder shortcuts), **Latest Details**, and **Quick
+Links**. Folder menus nest as deep as the drive goes — e.g. BS ›
+CALCS › BS01, Shop Drawings › For Approval › Seq 01, RFI Sent › Seq,
+CD › Approval Returns › CD#015, SKETCHES › sub › sub — and every level
+stays clickable (each menu is headed by its folder's own name) so you
+can open just BS or BS › CALCS when that's all you want. The **Latest
+Details...** button (beside Add to Favorites) jumps to the Latest
+Details tab.
 
 **Latest Details** (inside NaviTool) — one tab per connection family
-(BS, MC, VB, …; misc: STAIRS, LADDERS, RAILINGS, GATES, EC). Each
-family tab lists its connections with a direct link to the newest
-issued calc detail, then a MAPS block with one row per map (click any
-file name to open the PDF), plus open-folder buttons. Toggle
-Structural / Miscellaneous on top. "Latest" means highest REV first,
-newest MMDDYY date second (lettered REVs outrank pure-numeric ones),
-and covers both the working CALCS/MAPS folders and the dated submittal
+(BS, MC, VB, …; misc: STAIRS, LADDERS, RAILINGS, GATES, EC — Stair 1
+EC1 and Stair 2 EC1 stay separate rows). Each family tab lists its
+connections with a direct link to the newest issued calc detail, then
+a MAPS block with one row per map (click any file name to open the
+PDF), plus open-folder buttons. Toggle Structural / Miscellaneous on
+top (stairs never appear under Structural; misc shows only
+rails/stairs/ladders/gates). "Latest" means highest REV first, newest
+MMDDYY date second (lettered REVs outrank pure-numeric ones), and
+covers both the working CALCS/MAPS folders and the dated submittal
 packages (which can hold newer revisions). Map files need no DETAIL
 keyword (`FBD_MC_MAP05 (S2.91)_REV0Q_081326` works); files stamped with
 a placeholder date (`XXXX`, `04XX26`, … — not sent to the detailer
 yet), reference/layout suffixed copies, and dateless REVs are skipped.
-First visit scans with a progress bar; later visits paint instantly
+First visit scans with a progress bar (listing is parallelized, dead
+trees like SENT CALCS are never entered); later visits paint instantly
 from cache and refresh silently in the background (Cancel stops a slow
 scan, Refresh forces a full one).
 
