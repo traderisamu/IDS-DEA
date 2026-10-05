@@ -244,7 +244,7 @@ def _loose_group(side, conn, sub, body):
     tok = _conn_group(body or "")
     if tok is not None:
         if side == "MISC" and _token_alpha(tok) == "EC":
-            ctx = _stair_name(sub) if sub else None
+            ctx = _stair_token(body or "") or (_stair_name(sub) if sub else None)
             return "{} {}".format(ctx, tok) if ctx else tok
         return tok
     if side == "MISC" and sub:
@@ -267,6 +267,34 @@ def _subpath(task_folder, path):
 def _strip_pkg_date(name):
     """'100126 - Stair 2' -> 'Stair 2' (dated package/folder prefixes)."""
     return re.sub(r"^\d{6}\s*-\s*", "", name or "").strip() or name
+
+
+def _desc_from_body(body):
+    """Connection description straight from a filename body: drop (tags)
+    and floor tags, underscores to spaces. 'EC3 RAIL TYPE A_(15th)' ->
+    'EC3 RAIL TYPE A'; 'STAIR 01_(15th)' -> 'STAIR 01'."""
+    s = re.sub(r"\s*\([^)]*\)", "", body or "")
+    s = s.replace("_", " ")
+    s = re.sub(r"\b\d+(ST|ND|RD|TH)\b", "", s, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _norm_desc(desc):
+    """Grouping key: upper-cased, zero-pads stripped ('STAIR 01' and
+    'STAIR 1' are the same stair)."""
+    return re.sub(r"\b0+(\d)", r"\1", (desc or "").upper())
+
+
+def _folder_identity(folder_rel):
+    """Identity for duplicate detection: stair designator when the folder
+    names one ('West Stair2' and 'Stair 2' are both STAIR 2), else the
+    folder itself."""
+    return _stair_context(folder_rel) or folder_rel
+
+
+def _folder_short(folder_rel):
+    base = os.path.basename(folder_rel or "") or folder_rel or ""
+    return _strip_pkg_date(base)
 
 
 def _pkg_mentions(pkg_name, conn):
@@ -303,27 +331,36 @@ def _misc_family(name):
         return "RAILINGS"
     if "gate" in n:
         return "GATES"
+    if "pipesupport" in n:
+        return "PIPE SUPPORTS"
     if "ec" in n:
         return "EC"
     return None
 
 
-_MISC_WORDS_RE = re.compile(r"\b(STAIRS?|LADDERS?|RAIL(ING)?S?|GATES?)\b",
-                            re.IGNORECASE)
+_MISC_WORDS_RE = re.compile(
+    r"\b(STAIRS?|LADDERS?|RAIL(ING)?S?|GATES?|PIPE\s*SUPPORTS?)\b",
+    re.IGNORECASE)
 _EC_TOKEN_RE = re.compile(r"\bEC\d", re.IGNORECASE)
+
+
+def _blob(*texts):
+    """Join names for keyword matching with underscores flattened - file
+    bodies join words with '_' ("EC3_RAIL TYPE A"), which defeats \b
+    boundaries unless normalized first."""
+    return " ".join(t for t in texts if t).replace("_", " ")
 
 
 def _looks_like_misc(*texts):
     """Rail/stair/ladder/gate words or an EC-digit token anywhere across
     the given names. Word-boundaried so SPEC3 / S2.91 can't match."""
-    blob = " ".join(t for t in texts if t)
+    blob = _blob(*texts)
     return bool(_MISC_WORDS_RE.search(blob) or _EC_TOKEN_RE.search(blob))
 
 
 def _misc_kw_family(*texts):
     """Misc family from rail/stair/ladder/gate keywords, or None."""
-    blob = " ".join(t for t in texts if t)
-    m = _MISC_WORDS_RE.search(blob)
+    m = _MISC_WORDS_RE.search(_blob(*texts))
     if not m:
         return None
     return _misc_family(m.group(1))
@@ -393,8 +430,12 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
         return "map" if _MAP_RE.search(info["body"]) else "calc"
 
     def _work_family(info, conn):
-        if side == "MISC" and _token_alpha(_conn_group(info["body"]) or "") == "EC":
-            return "EC"
+        if side == "MISC":
+            if _token_alpha(_conn_group(info["body"]) or "") == "EC":
+                # Same context rule as packages: rail/stair/pipe context
+                # picks the family, bare EC only with zero context.
+                return _misc_kw_family(info["body"], conn) or "EC"
+            return conn
         return conn
 
     plans = []  # (folder, depth, is_pkg, resolve)
@@ -645,11 +686,24 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
                 continue
             family, group, kind, folder_rel = got
             seen_names.add(base)
+            display = group
+            if side == "MISC":
+                # Filename-first: the connection name comes from the file
+                # itself; the folder only disambiguates genuine duplicates
+                # at winners time (structural keeps folder/token groups).
+                desc = _desc_from_body(info["body"])
+                if desc:
+                    display = desc
+                    group = _norm_desc(desc)
             fam = groups.setdefault(family, {})
-            g = fam.setdefault(group, {"calc": [], "map": [], "folder": folder_rel})
+            g = fam.setdefault(group, {"calc": [], "map": [], "folder": folder_rel,
+                                       "display": display})
             if not g["folder"]:
                 g["folder"] = folder_rel
-            g[kind].append((info["key"], path))
+            if len(display) > len(g.get("display") or ""):
+                g["display"] = display
+            ident = _stair_context(info["body"]) or _folder_identity(folder_rel)
+            g[kind].append((info["key"], path, folder_rel, ident))
         return True
 
     working = [f for f in files if not f[1]]
@@ -659,52 +713,70 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
     if not _process(pkgs, "Reading submittal packages…"):
         return None
 
-    # Misc packages spell the same stair several ways ("Stair 2" vs
-    # "West Stair2"): merge parent-folder groups when one's de-spaced
-    # name contains the other's. Structural/token groups are exact codes
-    # (EC1 vs EC10 must NOT merge) and are left alone.
-    for family in list(groups):
-        if family not in ("STAIRS", "LADDERS", "RAILINGS", "GATES"):
-            continue
-        fdata = groups[family]
-        merged = {}
-        for gname in sorted(fdata, key=str.lower):
-            norm = re.sub(r"\s+", "", gname.lower())
-            dest = None
-            for mk in merged:
-                mkn = re.sub(r"\s+", "", mk.lower())
-                if len(norm) >= 5 and len(mkn) >= 5 and (norm in mkn or mkn in norm):
-                    dest = mk
-                    break
-            if dest is None:
-                merged[gname] = fdata[gname]
-                continue
-            d = merged.pop(dest)
-            s = fdata[gname]
-            d["calc"].extend(s["calc"])
-            d["map"].extend(s["map"])
-            if "SUBMITTAL" in d["folder"] and "SUBMITTAL" not in s["folder"]:
-                d["folder"] = s["folder"]
-            merged[gname if len(gname) > len(dest) else dest] = d
-        groups[family] = merged
+    # Misc filename-first housekeeping is done per-row below (folder
+    # identities unify spelling variants); structural groups are
+    # folder/token names and need no merging.
+
+    def _best(hits):
+        if not hits:
+            return []
+        top = max(k for k, _p, _f, _i in hits)
+        return sorted(p for k, p, _f, _i in hits if k == top)
+
+    def _best_pairs(pairs):
+        if not pairs:
+            return []
+        top = max(k for k, _p in pairs)
+        return sorted(p for k, p in pairs if k == top)
 
     winners = {}
     for family, fdata in groups.items():
         if side == "MISC" and family not in ("STAIRS", "LADDERS", "RAILINGS",
-                                             "GATES", "EC"):
-            continue  # misc is rails/stairs/ladders/gates/EC only - no OTHER
+                                             "GATES", "PIPE SUPPORTS", "EC"):
+            continue  # misc is rails/stairs/ladders/gates/pipes/EC only
         grows = {}
         for group, data in fdata.items():
-            row = {"folder": data["folder"]}
+            display = data.get("display") or group
+            if side != "MISC":
+                row = {"calc": _best(data["calc"]), "map": _best(data["map"]),
+                       "folder": data["folder"], "label": group}
+                if row["calc"] or row["map"]:
+                    grows[group] = row
+                continue
+            # Partition one description's hits by stair identity (the file's
+            # own stair context first, else its folder's): "West Stair2" ==
+            # "Stair 2" == "061926 - West Stair" for the same WEST STAIR 2
+            # file, while bare EC1s under different stairs stay apart - and
+            # only then does the folder name appear in the label.
+            parts = {}
             for kind in ("calc", "map"):
-                hits = data[kind]
-                if not hits:
-                    row[kind] = []
-                    continue
-                best = max(k for k, _p in hits)
-                row[kind] = sorted(p for k, p in hits if k == best)
-            if row["calc"] or row["map"]:
-                grows[group] = row
+                for k, p, f, ident in data[kind]:
+                    d = parts.setdefault(ident, {"calc": [], "map": [],
+                                                 "folder": f})
+                    d[kind].append((k, p))
+                    if "SUBMITTAL" in d["folder"] and "SUBMITTAL" not in f:
+                        d["folder"] = f
+            if len(parts) == 1:
+                d = next(iter(parts.values()))
+                row = {"calc": _best_pairs(d["calc"]),
+                       "map": _best_pairs(d["map"]),
+                       "folder": d["folder"], "label": display}
+                if row["calc"] or row["map"]:
+                    grows[group] = row
+                continue
+            for ident, d in sorted(parts.items(), key=lambda kv: str(kv[0]).lower()):
+                norm_ident = _norm_desc(str(ident or ""))
+                if norm_ident and norm_ident in _norm_desc(display):
+                    label = display  # identity already named (other rows carry suffixes)
+                else:
+                    short = ident if re.fullmatch(r"STAIR \d+", str(ident or "")) \
+                        else _folder_short(d["folder"])
+                    label = "{} ({})".format(display, short)
+                row = {"calc": _best_pairs(d["calc"]),
+                       "map": _best_pairs(d["map"]),
+                       "folder": d["folder"], "label": label}
+                if row["calc"] or row["map"]:
+                    grows["{}||{}".format(group, ident)] = row
         if grows:
             winners[family] = grows
     return winners
@@ -1068,13 +1140,17 @@ class LatestDetailsTab(ttk.Frame):
                              row=0, column=col, sticky="w", padx=8, pady=(2, 6))
         row_idx = 1
         calc_groups = sorted(
-            (g for g, d in fdata.items() if d["calc"]), key=str.lower)
+            (g for g, d in fdata.items() if d["calc"]),
+            key=lambda g: fdata[g].get("label") or g)
         for group in calc_groups:
-            row_idx = self._paint_row(page, job, row_idx, group, fdata[group]["calc"],
+            row_idx = self._paint_row(page, job, row_idx,
+                                      fdata[group].get("label") or group,
+                                      fdata[group]["calc"],
                                       fdata[group]["folder"])
         if show_maps:
             map_groups = sorted(
-                (g for g, d in fdata.items() if d["map"]), key=str.lower)
+                (g for g, d in fdata.items() if d["map"]),
+                key=lambda g: fdata[g].get("label") or g)
             if map_groups:
                 self._tlabel(page, text="\u2014 MAPS \u2014",
                              font=("Segoe UI", 9, "bold"),
@@ -1083,13 +1159,14 @@ class LatestDetailsTab(ttk.Frame):
                                                         padx=8, pady=(10, 2))
                 row_idx += 1
                 for group in map_groups:
-                    row_idx = self._paint_row(page, job, row_idx, group,
+                    row_idx = self._paint_row(page, job, row_idx,
+                                              fdata[group].get("label") or group,
                                               fdata[group]["map"],
                                               fdata[group]["folder"])
         page.grid_columnconfigure(1, weight=1)
 
-    def _paint_row(self, page, job, row_idx, group, paths, folder_rel):
-        self._tlabel(page, text=group,
+    def _paint_row(self, page, job, row_idx, label, paths, folder_rel):
+        self._tlabel(page, text=label,
                      font=("Segoe UI", 10, "bold")).grid(
                          row=row_idx, column=0, sticky="nw", padx=8, pady=6)
         self._link_cell(page, row_idx, 1, paths, job)

@@ -582,7 +582,7 @@ class Navigator(tk.Frame):
 
         sidebar = ttk.Frame(self, style="Sidebar.TFrame", padding=(14, 16))
         sidebar.grid(row=0, column=0, sticky="ns")
-        sidebar.configure(width=220)
+        sidebar.configure(width=265)
         sidebar.grid_propagate(False)
 
         ttk.Label(sidebar, text="NAVITOOL 2.0", style="Sidebar.TLabel",

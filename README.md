@@ -291,14 +291,17 @@ Details...** button (beside Add to Favorites) jumps to the Latest
 Details tab.
 
 **Latest Details** (inside NaviTool) — one tab per connection family
-(BS, MC, VB, …; misc: STAIRS, LADDERS, RAILINGS, GATES, EC — Stair 1
-EC1 and Stair 2 EC1 stay separate rows, rail-context EC files sit under
-Railings). Each family tab lists its connections with a direct link to
+(BS, MC, VB, …; misc: STAIRS, LADDERS, RAILINGS, GATES, PIPE
+SUPPORTS, EC — Stair 1 EC1 and Stair 2 EC1 stay separate rows,
+rail-context EC files sit under Railings). Misc rows are named from the
+filename itself (`EC3 RAIL TYPE A`, `WEST STAIR 2`); the folder name is
+added only when the same description comes from different places. Each
+family tab lists its connections with a direct link to
 the newest issued calc detail, then a MAPS block with one row per map
 (click any file name to open the PDF), plus open-folder buttons. Toggle
 Structural / Miscellaneous on top (stairs, rails, ladders, gates and EC
 files never appear under Structural — even untokened ones like WALL
-RAIL; misc shows only rails/stairs/ladders/gates/EC, with no OTHER
+RAIL; misc shows only rails/stairs/ladders/gates/pipes/EC, with no OTHER
 catchall). "Latest" means highest REV first, newest MMDDYY date second
 (lettered REVs outrank pure-numeric ones), and covers both the working
 CALCS/MAPS folders and the dated submittal packages, whose subfolders
