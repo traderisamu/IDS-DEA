@@ -308,6 +308,27 @@ def _misc_family(name):
     return None
 
 
+_MISC_WORDS_RE = re.compile(r"\b(STAIRS?|LADDERS?|RAIL(ING)?S?|GATES?)\b",
+                            re.IGNORECASE)
+_EC_TOKEN_RE = re.compile(r"\bEC\d", re.IGNORECASE)
+
+
+def _looks_like_misc(*texts):
+    """Rail/stair/ladder/gate words or an EC-digit token anywhere across
+    the given names. Word-boundaried so SPEC3 / S2.91 can't match."""
+    blob = " ".join(t for t in texts if t)
+    return bool(_MISC_WORDS_RE.search(blob) or _EC_TOKEN_RE.search(blob))
+
+
+def _misc_kw_family(*texts):
+    """Misc family from rail/stair/ladder/gate keywords, or None."""
+    blob = " ".join(t for t in texts if t)
+    m = _MISC_WORDS_RE.search(blob)
+    if not m:
+        return None
+    return _misc_family(m.group(1))
+
+
 # Working-folder children that never hold issued details at top level.
 _SKIP_DIRS = {"CALCS", "MAPS", "REF", "BACKUP", "MODEL", "CAD+SKETCH",
               "RISA INPUT", "RISA OUTPUT"}
@@ -448,18 +469,19 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
         )
     except OSError:
         packages = []
-    for pkg in packages:
-        pkg_abs = os.path.join(subm_root, pkg)
-        pkg_tail = os.path.join("{}_SUBMITTAL".format(code), pkg)
-        mentioned = [c for c in conns if _pkg_mentions(pkg, c)]
-        mentioned_other = [c for c in other_conns if _pkg_mentions(pkg, c)]
 
-        def _pkg_resolve(info, path, _pkg=pkg, _tail=pkg_tail,
+    def _make_pkg_resolve(pkg_name, pkg_tail):
+        mentioned = [c for c in conns if _pkg_mentions(pkg_name, c)]
+        mentioned_other = [c for c in other_conns if _pkg_mentions(pkg_name, c)]
+
+        def _pkg_resolve(info, path, _pkg=pkg_name, _tail=pkg_tail,
                          _men=list(mentioned), _meno=list(mentioned_other)):
             body = info["body"]
             kind = "map" if _MAP_RE.search(body) else "calc"
             parent = os.path.basename(os.path.dirname(path))
             stair = _stair_context(body, parent, _pkg)
+            if side == "STRUCTURAL" and _looks_like_misc(body, parent, _pkg):
+                return None  # rails/stairs/ladders/gates/EC live on misc
             if _MAP_RE.search(body):
                 grp = _map_group(body)
                 if grp in seen_maps:
@@ -483,29 +505,44 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
                 return (who, stok, kind, _tail)
             tok = _conn_group(body)
             if tok is None:
+                if side == "MISC":
+                    # Keyworded files stay findable even inside a package
+                    # claimed by the other side (no black holes).
+                    kwf = _misc_kw_family(body, parent, _pkg)
+                    if kwf is not None and parent:
+                        return (kwf, _strip_pkg_date(parent), kind, _tail)
+                    if _meno and not _men:
+                        return None  # the other side's package - not ours
+                    if parent:
+                        return (_misc_family(parent) or "OTHER",
+                                _strip_pkg_date(parent), kind, _tail)
+                    return ("OTHER", "(submittal)", kind, _tail)
                 if _meno and not _men:
                     return None  # the other side's package - not ours
-                if side == "MISC" and parent:
-                    return (_misc_family(parent) or "OTHER",
-                            _strip_pkg_date(parent), kind, _tail)
-                return ("OTHER", "(submittal)", kind, _tail)
+                return ("OTHER",
+                        _strip_pkg_date(parent) if parent else "(submittal)",
+                        kind, _tail)
             alpha = _token_alpha(tok)
             if alpha == "EC":
                 if side != "MISC":
                     return None
-                # An EC1 under Stair 1 is a different calc from an EC1
-                # under Stair 2 - carry the stair context in the group
-                # ("EC EC3" would double up, so a bare EC context is dropped).
-                ctx = stair or _misc_family(parent) or None
-                if ctx == "EC":
-                    ctx = None
-                return ("EC", "{} {}".format(ctx, tok) if ctx else tok, kind,
-                        _tail)
+                # The context picks the family: rail context files under
+                # RAILINGS, stair context under STAIRS (stair-qualified so
+                # Stair 1 EC1 and Stair 2 EC1 stay apart); EC only with
+                # zero context anywhere.
+                fam = _misc_kw_family(body, parent, _pkg) or "EC"
+                if fam == "STAIRS" and stair:
+                    tok = "{} {}".format(stair, tok)
+                return (fam, tok, kind, _tail)
             where, who = _owning_conn(alpha)
             if where == "mine":
                 return (who, tok, kind, _tail)
             if where == "theirs":
                 return None
+            if side == "MISC":
+                kwf = _misc_kw_family(body, parent, _pkg)
+                if kwf is not None:
+                    return (kwf, tok, kind, _tail)
             if _men and not _meno:
                 return (_men[0] if len(_men) == 1 else "OTHER", tok, kind,
                         _tail)
@@ -513,7 +550,28 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
                 return None
             return ("OTHER", tok, kind, _tail)
 
-        _add(pkg_abs, 4, True, _pkg_resolve)
+        return _pkg_resolve
+
+    for pkg in packages:
+        pkg_abs = os.path.join(subm_root, pkg)
+        pkg_tail = os.path.join("{}_SUBMITTAL".format(code), pkg)
+        # The package's own top files keep its name, but each child
+        # folder is its own package: files under OLD/050226B - MC/...
+        # must attribute by the dated name, not the container, or every
+        # mention-match misses and they all sink into OTHER.
+        _add(pkg_abs, 0, True, _make_pkg_resolve(pkg, pkg_tail))
+        try:
+            _subpkgs = sorted(
+                (e.name for e in os.scandir(pkg_abs) if e.is_dir()),
+                key=str.lower,
+            )
+        except OSError:
+            _subpkgs = []
+        for _sp in _subpkgs:
+            if _pruned_dir(_sp):
+                continue
+            _add(os.path.join(pkg_abs, _sp), 3, True,
+                 _make_pkg_resolve(_sp, os.path.join(pkg_tail, _sp)))
 
     # ---- phase 1: enumerate in breadth-first rounds (one task per
     # directory, balanced across workers - a single deep tree like OLD/
@@ -632,6 +690,9 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
 
     winners = {}
     for family, fdata in groups.items():
+        if side == "MISC" and family not in ("STAIRS", "LADDERS", "RAILINGS",
+                                             "GATES", "EC"):
+            continue  # misc is rails/stairs/ladders/gates/EC only - no OTHER
         grows = {}
         for group, data in fdata.items():
             row = {"folder": data["folder"]}
@@ -765,11 +826,15 @@ class LatestDetailsTab(ttk.Frame):
         self.job_label.pack(side="left", padx=(12, 0))
         ttk.Button(top, text="Refresh",
                    command=lambda: self.refresh(force=True)).pack(side="right")
+        # Controls on their own row so long job names can't squeeze them
+        # into an unreadable stub (was one crowded row before).
+        ctl = ttk.Frame(self, padding=(10, 0, 10, 0))
+        ctl.pack(fill="x")
+        ttk.Label(ctl, text="Show:", font=("Segoe UI", 9)).pack(side="left")
         for side in SIDES:
-            ttk.Radiobutton(top, text=SIDE_LABELS[side], value=side,
+            ttk.Radiobutton(ctl, text=SIDE_LABELS[side], value=side,
                             variable=self._side,
-                            command=self._on_side_changed).pack(side="right", padx=4)
-        ttk.Label(top, text="Show:", font=("Segoe UI", 9)).pack(side="right", padx=(10, 0))
+                            command=self._on_side_changed).pack(side="left", padx=4)
 
         hint = self._tlabel(self, padding=(10, 2, 10, 0), font=("Segoe UI", 8),
                                 foreground="#68727d", wraplength=900, justify="left",

@@ -195,7 +195,9 @@ a reference like `SC01` logged under one JOB Code won't show up as a
 suggestion under a different JOB Code, even for the same Work
 Description, since that's usually a different context entirely (and
 the last thing you want is accidentally pasting the wrong reference
-onto the wrong job). Pick Work Description from the dropdown, enter
+onto the wrong job). Pure numbers (`12`, `4.5`) are never suggested -
+yesterday's joint count doesn't belong in today's box - while names
+with digits (`BS01`) still are. Pick Work Description from the dropdown, enter
 Hours, and Remarks, then **Add Entry**.
 
 - **A few Work Descriptions only show up for certain JOB codes.** As
@@ -290,22 +292,25 @@ Details tab.
 
 **Latest Details** (inside NaviTool) — one tab per connection family
 (BS, MC, VB, …; misc: STAIRS, LADDERS, RAILINGS, GATES, EC — Stair 1
-EC1 and Stair 2 EC1 stay separate rows). Each family tab lists its
-connections with a direct link to the newest issued calc detail, then
-a MAPS block with one row per map (click any file name to open the
-PDF), plus open-folder buttons. Toggle Structural / Miscellaneous on
-top (stairs never appear under Structural; misc shows only
-rails/stairs/ladders/gates). "Latest" means highest REV first, newest
-MMDDYY date second (lettered REVs outrank pure-numeric ones), and
-covers both the working CALCS/MAPS folders and the dated submittal
-packages (which can hold newer revisions). Map files need no DETAIL
-keyword (`FBD_MC_MAP05 (S2.91)_REV0Q_081326` works); files stamped with
-a placeholder date (`XXXX`, `04XX26`, … — not sent to the detailer
-yet), reference/layout suffixed copies, and dateless REVs are skipped.
-First visit scans with a progress bar (listing is parallelized, dead
-trees like SENT CALCS are never entered); later visits paint instantly
-from cache and refresh silently in the background (Cancel stops a slow
-scan, Refresh forces a full one).
+EC1 and Stair 2 EC1 stay separate rows, rail-context EC files sit under
+Railings). Each family tab lists its connections with a direct link to
+the newest issued calc detail, then a MAPS block with one row per map
+(click any file name to open the PDF), plus open-folder buttons. Toggle
+Structural / Miscellaneous on top (stairs, rails, ladders, gates and EC
+files never appear under Structural — even untokened ones like WALL
+RAIL; misc shows only rails/stairs/ladders/gates/EC, with no OTHER
+catchall). "Latest" means highest REV first, newest MMDDYY date second
+(lettered REVs outrank pure-numeric ones), and covers both the working
+CALCS/MAPS folders and the dated submittal packages, whose subfolders
+count as packages in their own right (so `OLD/050226B - MC/…`
+attributes by its dated name, not the container). Map files need no
+DETAIL keyword (`FBD_MC_MAP05 (S2.91)_REV0Q_081326` works); files
+stamped with a placeholder date (`XXXX`, `04XX26`, … — not sent to the
+detailer yet), reference/layout suffixed copies, and dateless REVs are
+skipped. First visit scans with a progress bar (parallel listing, dead
+trees never entered — about 11s on the biggest job); later visits paint
+instantly from cache and refresh silently in the background (Cancel
+stops a slow scan, Refresh forces a full one).
 
 **Dashboard tab** (3rd tab) — one scrolling page: the **Link
 Generator** on top (drop files/folders straight onto the table, or Add

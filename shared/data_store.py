@@ -418,7 +418,10 @@ def _clean_detail_value(value):
     back from Excel as int/float whenever a cell was ever touched as a
     number (which would crash the typeahead's string filtering), and some
     legacy rows hold the literal string "None" from an old None-to-text
-    coercion. Returns "" for anything with no suggestable content."""
+    coercion. Pure numbers ("12", "4.5") are deliberately NOT remembered -
+    re-suggesting yesterday's joint count into today's Details box is how
+    wrong numbers end up on timesheets; names with digits ("BS01") still
+    are. Returns "" for anything with no suggestable content."""
     if value is None or isinstance(value, bool):
         return ""
     if isinstance(value, float) and value.is_integer():
@@ -426,7 +429,13 @@ def _clean_detail_value(value):
     text = str(value).strip()
     if not text or text.lower() == "none":
         return ""
-    return text
+    try:
+        number = float(text)
+    except ValueError:
+        return text
+    if number != number or number in (float("inf"), float("-inf")):
+        return text  # "nan"/"inf" strings - not real number inputs
+    return ""
 
 
 def get_employee_details_history(shared_path, employee_name, job=None, work_description=None, limit=15):
