@@ -301,8 +301,9 @@ issued calc detail (bare codes borrow their folder's description, e.g.
 `MC01 - WBm to HSSCol DW 1W`), then a MAPS block with one row per map
 (click any file name to open the PDF), plus open-folder buttons. The
 STAIRS tab splits further into whole-stair rows, an EC block and a
-RAILS block; RAILINGS splits off an EC block the same way. Archived
-`OLD` packages and `void`/`ref` drops are never scanned. Toggle
+RAILS block; RAILINGS splits off an EC block the same way. `void`/`ref` drops are
+never scanned; archived `OLD` packages are scanned but attributed by
+their dated names (some issued files exist only there). Toggle
 Structural / Miscellaneous on top (stairs, rails, ladders, gates and EC
 files never appear under Structural — even untokened ones like WALL
 RAIL; misc shows only rails/stairs/ladders/gates/pipes/EC, with no OTHER

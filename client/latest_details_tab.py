@@ -128,16 +128,17 @@ def parse_detail_name(filename):
 def _pruned_dir(name):
     """Subtrees that can never hold a rankable issued detail: sent-calc
     bundles (dateless REV00-03), review areas, models/backups, reference
-    and void drops, and archived OLD packages (their dated contents also
-    exist as working-tree copies - verified on FBD). Verified against
-    Trinity/JPI/FBD/SAB - the winners test guards this list (any miss
-    shows up as a diff)."""
+    and void drops. NOTE: OLD archive packages are deliberately NOT
+    pruned - spot-verified files (FBD Stair 1 REV1A, the ladders) exist
+    ONLY there; the attribution rules place them correctly, so nothing
+    leaks. Verified against Trinity/JPI/FBD/SAB - the winners test
+    guards this list (any miss shows up as a diff)."""
     u = (name or "").upper()
     if u in ("SENT CALCS", "TO EQA", "MODEL", "BACKUP", "CAD", "SK", "VOID",
              "REF", "RISA INPUT", "RISA OUTPUT", "CAD+SKETCH", "OTHER RUNS",
              "CBFEM"):
         return True
-    if re.match(r"^(OLD|VOID|REF)\b", u):
+    if re.match(r"^(VOID|REF)\b", u):
         return True
     if u.startswith(("BACKUP", "RISA", "CHECKING", "FULL CALC",
                      "MUSTAFA")):
@@ -562,6 +563,12 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
                     return ("OTHER", "(submittal)", kind, _tail)
                 if _meno and not _men:
                     return None  # the other side's package - not ours
+                if _men and not _meno:
+                    # Sole-claimed package: file belongs to that connection
+                    # (an MC-named folder's untokened calc is an MC row).
+                    return (_men[0],
+                            _strip_pkg_date(parent) if parent else "(submittal)",
+                            kind, _tail)
                 return ("OTHER",
                         _strip_pkg_date(parent) if parent else "(submittal)",
                         kind, _tail)
@@ -596,8 +603,6 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
         return _pkg_resolve
 
     for pkg in packages:
-        if _pruned_dir(pkg):
-            continue  # archived containers (OLD) - dated children covered below
         pkg_abs = os.path.join(subm_root, pkg)
         pkg_tail = os.path.join("{}_SUBMITTAL".format(code), pkg)
         # The package's own top files keep its name, but each child
