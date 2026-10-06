@@ -285,13 +285,6 @@ def _norm_desc(desc):
     return re.sub(r"\b0+(\d)", r"\1", (desc or "").upper())
 
 
-def _folder_identity(folder_rel):
-    """Identity for duplicate detection: stair designator when the folder
-    names one ('West Stair2' and 'Stair 2' are both STAIR 2), else the
-    folder itself."""
-    return _stair_context(folder_rel) or folder_rel
-
-
 def _folder_short(folder_rel):
     base = os.path.basename(folder_rel or "") or folder_rel or ""
     return _strip_pkg_date(base)
@@ -339,7 +332,7 @@ def _misc_family(name):
 
 
 _MISC_WORDS_RE = re.compile(
-    r"\b(STAIRS?|LADDERS?|RAIL(ING)?S?|GATES?|PIPE\s*SUPPORTS?)\b",
+    r"\b(STAIRS?|LADDERS?|(?:GUARD|HAND)?RAIL(ING)?S?|GATES?|PIPE\s*SUPPORTS?)\b",
     re.IGNORECASE)
 _EC_TOKEN_RE = re.compile(r"\bEC\d", re.IGNORECASE)
 
@@ -430,12 +423,17 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
         return "map" if _MAP_RE.search(info["body"]) else "calc"
 
     def _work_family(info, conn):
-        if side == "MISC":
-            if _token_alpha(_conn_group(info["body"]) or "") == "EC":
-                # Same context rule as packages: rail/stair/pipe context
-                # picks the family, bare EC only with zero context.
-                return _misc_kw_family(info["body"], conn) or "EC"
+        # Body keywords win over the folder: a guardrail DETAIL sitting
+        # under a LADDERS connection is still a railing (and stair rails
+        # under RAILINGS are still stairs) - the folder is only the
+        # fallback when the filename says nothing.
+        if side != "MISC":
             return conn
+        kw = _misc_kw_family(info["body"], conn)
+        if kw is not None:
+            return kw
+        if _token_alpha(_conn_group(info["body"]) or "") == "EC":
+            return "EC"
         return conn
 
     plans = []  # (folder, depth, is_pkg, resolve)
@@ -620,6 +618,7 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
     files = []  # (path, is_pkg, resolve)
     found = [0]
     _found_lock = threading.Lock()
+    _walk_index = []  # (dir-rel under side_root or SUBMITTAL, [child names])
 
     def _run_dir(task):
         folder, depth, is_pkg, resolve = task
@@ -641,6 +640,12 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
                                   key=str.lower)
             except OSError:
                 kids = []
+            try:
+                _rel = os.path.relpath(folder, side_root)
+            except ValueError:
+                _rel = ""
+            with _found_lock:
+                _walk_index.append((_rel, kids))
             for k in kids:
                 if not _pruned_dir(k):
                     children.append((os.path.join(folder, k), depth - 1,
@@ -702,7 +707,7 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
                 g["folder"] = folder_rel
             if len(display) > len(g.get("display") or ""):
                 g["display"] = display
-            ident = _stair_context(info["body"]) or _folder_identity(folder_rel)
+            ident = _stair_context(info["body"]) or _stair_context(folder_rel)
             g[kind].append((info["key"], path, folder_rel, ident))
         return True
 
@@ -716,6 +721,29 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
     # Misc filename-first housekeeping is done per-row below (folder
     # identities unify spelling variants); structural groups are
     # folder/token names and need no merging.
+
+    # Folder descriptions for bare token groups (JPI's "MC01" package
+    # rows borrow "MC01 - WBm to ..." from the working tree). Built from
+    # the enumeration's directory listings - zero extra network calls.
+    # Structural only; misc rows are already filename descriptions.
+    _conn_kids = {}
+    for _rel, _kids in _walk_index:
+        _top = _rel.split(os.sep)[0] if _rel not in (".", "") else ""
+        if not _top or _top == "..":
+            continue
+        _conn_kids.setdefault(_top, set()).update(_kids)
+
+    def _folder_desc(family, token):
+        kids = _conn_kids.get(family)
+        if not kids:
+            return None
+        t = (token or "").upper()
+        if not re.fullmatch(r"[A-Z]{2,}\d+[A-Z]?", t):
+            return None
+        hits = sorted(nm for nm in kids
+                      if nm.upper() == t or nm.upper().startswith(t + " ")
+                      or nm.upper().startswith(t + "-"))
+        return hits[0] if hits else None
 
     def _best(hits):
         if not hits:
@@ -738,8 +766,10 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
         for group, data in fdata.items():
             display = data.get("display") or group
             if side != "MISC":
+                desc = _folder_desc(family, group)
                 row = {"calc": _best(data["calc"]), "map": _best(data["map"]),
-                       "folder": data["folder"], "label": group}
+                       "folder": data["folder"],
+                       "label": desc or group}
                 if row["calc"] or row["map"]:
                     grows[group] = row
                 continue
@@ -848,6 +878,18 @@ def _latest_cache_save(cache):
         pass
 
 
+def _stairs_block(label):
+    """STAIRS-tab sub-block for a group label: 1 = stair EC calcs, 2 =
+    stair rails, 0 = whole-stair rows. EC wins ties (an 'EC1 STAIR RAIL'
+    is first an EC calc)."""
+    text = label or ""
+    if _EC_TOKEN_RE.search(text):
+        return 1
+    if _MISC_WORDS_RE.search(text) and "rail" in _stem(text):
+        return 2
+    return 0
+
+
 class LatestDetailsTab(ttk.Frame):
     """Newest calc detail + map per connection, grouped under MC / VB /
     BS / ... family headers. Follows NaviTool's selected job via
@@ -925,27 +967,41 @@ class LatestDetailsTab(ttk.Frame):
         self.prog_bar.pack(side="right", padx=(6, 0))
         self._set_progress_visible(False)
 
-        wrap = ttk.Frame(self, padding=(10, 6, 10, 10))
-        wrap.pack(fill="both", expand=True)
-        if self._embedded:
-            # No inner scroll region when embedded - NaviTool's own
-            # content canvas scrolls the whole page (nested canvases
-            # fight over the mouse wheel).
-            self.body = ttk.Frame(wrap, style="App.TFrame")
-            self.body.pack(fill="x")
-            self._body_win = None
-            return
-        self.canvas = tk.Canvas(wrap, background="#f5f6f8", highlightthickness=0)
-        vscroll = ttk.Scrollbar(wrap, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=vscroll.set)
-        self.canvas.pack(side="left", fill="both", expand=True)
-        vscroll.pack(side="right", fill="y")
-        self.body = ttk.Frame(self.canvas)
-        self._body_win = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
+        # Fixed family tabs + scrolling rows: neither scrolls away.
+        # (Embedded pages don't scroll themselves - this rows canvas is
+        # the Latest page's only scroll region, so the wheel never
+        # fights nested scrollers.)
+        self._fam_slot = ttk.Frame(self, padding=(10, 2, 10, 0))
+        self._fam_slot.pack(fill="x")
+        self._fam_nb = None
+        rows_wrap = ttk.Frame(self, padding=(10, 2, 10, 10))
+        rows_wrap.pack(fill="both", expand=True)
+        rows_wrap.grid_columnconfigure(0, weight=1)
+        rows_wrap.grid_rowconfigure(0, weight=1)
+        self._rows_canvas = tk.Canvas(rows_wrap, background="#f5f6f8",
+                                      highlightthickness=0)
+        rows_vsb = ttk.Scrollbar(rows_wrap, orient="vertical",
+                                 command=self._rows_canvas.yview)
+        self.body = ttk.Frame(self._rows_canvas,
+                              style="App.TFrame" if self._embedded else "TFrame")
+        self._body_win = self._rows_canvas.create_window((0, 0), window=self.body,
+                                                         anchor="nw")
+        self._rows_canvas.configure(yscrollcommand=rows_vsb.set)
+        self._rows_canvas.grid(row=0, column=0, sticky="nsew")
+        rows_vsb.grid(row=0, column=1, sticky="ns")
         self.body.bind("<Configure>",
-                       lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>",
-                         lambda e: self.canvas.itemconfig(self._body_win, width=e.width))
+                       lambda _e: self._rows_canvas.configure(
+                           scrollregion=self._rows_canvas.bbox("all")))
+        self._rows_canvas.bind("<Configure>",
+                               lambda e: self._rows_canvas.itemconfig(
+                                   self._body_win, width=e.width))
+
+    def scroll_top(self):
+        """Reset the rows scroll (used by NaviTool's Latest Details... button)."""
+        try:
+            self._rows_canvas.yview_moveto(0.0)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _on_side_changed(self):
         try:
@@ -1089,6 +1145,13 @@ class LatestDetailsTab(ttk.Frame):
     def _clear(self):
         for w in self.body.winfo_children():
             w.destroy()
+        for w in self._fam_slot.winfo_children():
+            w.destroy()
+        self._fam_nb = None
+        try:
+            self._rows_canvas.yview_moveto(0.0)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _message(self, text):
         self.job_label.config(text="")
@@ -1108,6 +1171,7 @@ class LatestDetailsTab(ttk.Frame):
         self._clear()
         self._shown = (job, side, rows)
         self.job_label.config(text="{}  \u2022  {}".format(job, SIDE_LABELS[side]))
+        self.body.grid_columnconfigure(1, weight=1)
         if not rows:
             self._message("No issued detail files found yet for '{}' "
                           "({}). They appear here once DETAIL pdfs land in the "
@@ -1115,8 +1179,10 @@ class LatestDetailsTab(ttk.Frame):
                           "package.".format(job, SIDE_LABELS[side]))
             return
         show_maps = side != "MISC"  # misc (stairs/rails/ladders/gates/EC) has no maps
-        nb = ttk.Notebook(self.body)
-        nb.pack(fill="x", padx=4, pady=(2, 6))
+        # Family tabs live in the fixed slot above the rows canvas, so
+        # they never scroll away either.
+        nb = ttk.Notebook(self._fam_slot)
+        nb.pack(fill="x")
         fams = sorted(rows, key=str.lower)
         # OTHER collects the unplaceable leftovers - always the last tab.
         fams = [f for f in fams if f != "OTHER"]
@@ -1127,12 +1193,15 @@ class LatestDetailsTab(ttk.Frame):
             if self._ebg is not None:
                 page.configure(style="App.TFrame")
             nb.add(page, text=family)
-            self._paint_family(page, job, rows[family], show_maps)
+            self._paint_family(page, job, family, rows[family], show_maps)
         self._fam_nb = nb
 
-    def _paint_family(self, page, job, fdata, show_maps):
+    def _paint_family(self, page, job, family, fdata, show_maps):
         """One family tab: connection calc rows, then a MAPS block with
-        one row per map (structural only). No map column anywhere."""
+        one row per map (structural only). The STAIRS tab additionally
+        splits into whole-stair rows, an EC block and a RAILS block -
+        the same idea as MAPS, for stair ECs and stair rails. No map
+        column anywhere."""
         headers = ("Connection", "Latest calc detail", "")
         for col, text in enumerate(headers):
             self._tlabel(page, text=text,
@@ -1142,11 +1211,32 @@ class LatestDetailsTab(ttk.Frame):
         calc_groups = sorted(
             (g for g, d in fdata.items() if d["calc"]),
             key=lambda g: fdata[g].get("label") or g)
-        for group in calc_groups:
-            row_idx = self._paint_row(page, job, row_idx,
-                                      fdata[group].get("label") or group,
-                                      fdata[group]["calc"],
-                                      fdata[group]["folder"])
+        if family == "STAIRS":
+            blocks = [("main", [g for g in calc_groups
+                                if _stairs_block(fdata[g].get("label") or g) == 0]),
+                      ("\u2014 EC \u2014", [g for g in calc_groups
+                                            if _stairs_block(fdata[g].get("label") or g) == 1]),
+                      ("\u2014 RAILS \u2014", [g for g in calc_groups
+                                               if _stairs_block(fdata[g].get("label") or g) == 2])]
+            for title, members in blocks:
+                if title != "main" and members:
+                    self._tlabel(page, text=title,
+                                 font=("Segoe UI", 9, "bold"),
+                                 foreground="#20252b").grid(row=row_idx, column=0,
+                                                            columnspan=3, sticky="w",
+                                                            padx=8, pady=(10, 2))
+                    row_idx += 1
+                for group in members:
+                    row_idx = self._paint_row(page, job, row_idx,
+                                              fdata[group].get("label") or group,
+                                              fdata[group]["calc"],
+                                              fdata[group]["folder"])
+        else:
+            for group in calc_groups:
+                row_idx = self._paint_row(page, job, row_idx,
+                                          fdata[group].get("label") or group,
+                                          fdata[group]["calc"],
+                                          fdata[group]["folder"])
         if show_maps:
             map_groups = sorted(
                 (g for g, d in fdata.items() if d["map"]),

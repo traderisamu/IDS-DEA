@@ -288,7 +288,12 @@ CD › Approval Returns › CD#015, SKETCHES › sub › sub — and every level
 stays clickable (each menu is headed by its folder's own name) so you
 can open just BS or BS › CALCS when that's all you want. The **Latest
 Details...** button (beside Add to Favorites) jumps to the Latest
-Details tab.
+Details tab. The three sub-tabs stay pinned while each page scrolls
+its own content; inside Latest Details the title, Structural /
+Miscellaneous toggle and family tabs stay pinned while the rows
+scroll. Pressing **Refresh Jobs** rebuilds the open job immediately
+(the button also notes the time), so renames and new folders show up
+at once — otherwise folder shortcuts follow the cache.
 
 **Latest Details** (inside NaviTool) — one tab per connection family
 (BS, MC, VB, …; misc: STAIRS, LADDERS, RAILINGS, GATES, PIPE
@@ -296,10 +301,12 @@ SUPPORTS, EC — Stair 1 EC1 and Stair 2 EC1 stay separate rows,
 rail-context EC files sit under Railings). Misc rows are named from the
 filename itself (`EC3 RAIL TYPE A`, `WEST STAIR 2`); the folder name is
 added only when the same description comes from different places. Each
-family tab lists its connections with a direct link to
-the newest issued calc detail, then a MAPS block with one row per map
-(click any file name to open the PDF), plus open-folder buttons. Toggle
-Structural / Miscellaneous on top (stairs, rails, ladders, gates and EC
+family tab lists its connections with a direct link to its newest
+issued calc detail (bare codes borrow their folder's description, e.g.
+`MC01 - WBm to HSSCol DW 1W`), then a MAPS block with one row per map
+(click any file name to open the PDF), plus open-folder buttons. The
+STAIRS tab splits further into whole-stair rows, an EC block and a
+RAILS block. Toggle Structural / Miscellaneous on top (stairs, rails, ladders, gates and EC
 files never appear under Structural — even untokened ones like WALL
 RAIL; misc shows only rails/stairs/ladders/gates/pipes/EC, with no OTHER
 catchall). "Latest" means highest REV first, newest MMDDYY date second

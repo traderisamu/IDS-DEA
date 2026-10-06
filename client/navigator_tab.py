@@ -666,35 +666,62 @@ class Navigator(tk.Frame):
         self.status_var.trace_add("write", _sync_status_row)
         _sync_status_row()
 
-        # Scrollable content area: jobs with many sections are taller than
-        # the window, and without this the bottom buttons (quick links)
-        # could sit below the visible area with no way to reach them.
-        # self.content keeps its name/role (the inner frame everything
-        # renders into) so no render code changes.
+        # Fixed tab strip + one scroll region per page: the Job Folders /
+        # Latest Details / Quick Links tabs never scroll away; each page
+        # scrolls its own content (exactly one canvas per scrolling page,
+        # so the mouse wheel never fights nested scrollers). The Latest
+        # page holds only the panel, which freezes its own header and
+        # family tabs above its rows canvas (see _mount_latest_panel).
         content_wrap = ttk.Frame(main, style="App.TFrame")
         content_wrap.grid(row=3, column=0, sticky="nsew")
         content_wrap.grid_columnconfigure(0, weight=1)
-        content_wrap.grid_rowconfigure(0, weight=1)
-        self._content_canvas = tk.Canvas(content_wrap, background="#f5f6f8",
-                                         highlightthickness=0)
-        content_vsb = ttk.Scrollbar(content_wrap, orient="vertical",
-                                    command=self._content_canvas.yview)
-        self.content = ttk.Frame(self._content_canvas, style="App.TFrame")
-        self._content_canvas.create_window((0, 0), window=self.content, anchor="nw")
-        self._content_canvas.configure(yscrollcommand=content_vsb.set)
-        self._content_canvas.grid(row=0, column=0, sticky="nsew")
-        content_vsb.grid(row=0, column=1, sticky="ns")
-        self.content.grid_columnconfigure(0, weight=1, uniform="btn")
-        self.content.grid_columnconfigure(1, weight=1, uniform="btn")
-        self.content.grid_columnconfigure(2, weight=1, uniform="btn")
-        self.content.grid_rowconfigure(99, weight=1)
-        self.content.bind("<Configure>",
-                          lambda e: self._content_canvas.configure(
-                              scrollregion=self._content_canvas.bbox("all")))
-        self._content_canvas.bind("<Configure>", self._fit_content_width)
-        self._content_canvas.bind_all("<MouseWheel>", self._scroll_content_wheel, add="+")
+        content_wrap.grid_rowconfigure(1, weight=1)
+        self._sub_nb = ttk.Notebook(content_wrap)
+        self._sub_nb.grid(row=0, column=0, sticky="ew")
+        self._page_frames = {}
+        self._page_canvas = {}
+        self._page_inner = {}
+        self._scroll_map = {}
+        for _pname, _plabel in (("folders", "Job Folders"),
+                                ("latest", "Latest Details"),
+                                ("quick", "Quick Links")):
+            _pg = ttk.Frame(self._sub_nb, style="App.TFrame")
+            self._sub_nb.add(_pg, text=_plabel)
+            self._page_frames[_pname] = _pg
+            if _pname == "latest":
+                self._page_latest = _pg
+                continue
+            _pg.grid_columnconfigure(0, weight=1)
+            _pg.grid_rowconfigure(0, weight=1)
+            _cv = tk.Canvas(_pg, background="#f5f6f8", highlightthickness=0)
+            _vsb = ttk.Scrollbar(_pg, orient="vertical", command=_cv.yview)
+            _inner = ttk.Frame(_cv, style="App.TFrame")
+            _cv.create_window((0, 0), window=_inner, anchor="nw")
+            _cv.configure(yscrollcommand=_vsb.set)
+            _cv.grid(row=0, column=0, sticky="nsew")
+            _vsb.grid(row=0, column=1, sticky="ns")
+            for _col in range(3):
+                _inner.grid_columnconfigure(_col, weight=1, uniform="btn")
+            _inner.bind("<Configure>",
+                        lambda e, c=_cv: c.configure(scrollregion=c.bbox("all")))
+            _cv.bind("<Configure>", lambda e, c=_cv: self._fit_canvas_width(c))
+            self._page_canvas[_pname] = _cv
+            self._page_inner[_pname] = _inner
+            self._scroll_map[_inner] = _cv
+        self._latest_panel = None
+        self.bind_all("<MouseWheel>", self._scroll_content_wheel, add="+")
 
         self._show_placeholder()
+
+    def _fit_canvas_width(self, canvas):
+        """Keep a page canvas's inner frame as wide as the canvas so the
+        3-column button grid always fills the visible width."""
+        try:
+            width = canvas.winfo_width()
+            for item in canvas.find_all():
+                canvas.itemconfigure(item, width=width)
+        except tk.TclError:
+            pass
 
     def _search_focus_in(self, _):
         if self.job_search.get() == "Search jobs...":
@@ -709,9 +736,11 @@ class Navigator(tk.Frame):
     def refresh_jobs(self):
         # NOTE: the section cache is deliberately NOT wiped here. A full
         # wipe made every post-refresh click re-scan the network share
-        # (the main click-lag complaint). Stale folders for still-existing
-        # jobs are refreshed on click by _show_job_async; only entries for
-        # jobs that no longer exist are pruned.
+        # (the main click-lag complaint). Only entries for jobs that no
+        # longer exist are pruned; favorites/recents rebuild in the
+        # background via _prewarm(force=True); and the currently open job
+        # (if any) is rebuilt immediately below - so a rename or a new
+        # folder shows up as soon as you press this button.
         try:
             names = []
             with os.scandir(JOB_ROOT) as it:
@@ -732,6 +761,15 @@ class Navigator(tk.Frame):
                 save_section_cache(self._folder_cache)
         self.filter_jobs()
         self._prewarm(force=True)
+        if self.current_job and self.current_job in self.jobs:
+            with self._cache_lock:
+                self._folder_cache.pop(self.current_job, None)
+            self._show_job_async()
+            try:
+                import datetime as _dt
+                self.status_var.set("Refreshed %s." % _dt.datetime.now().strftime("%H:%M"))
+            except Exception:
+                pass
 
     def filter_jobs(self):
         q = self.job_search.get().strip().lower()
@@ -776,27 +814,23 @@ class Navigator(tk.Frame):
             self.job_list.see(idx)
 
     def _clear_content(self):
-        for w in self.content.winfo_children():
+        for inner in self._page_inner.values():
+            for w in inner.winfo_children():
+                w.destroy()
+        for w in self._page_frames["latest"].winfo_children():
             w.destroy()
-        try:
-            self._content_canvas.yview_moveto(0.0)
-        except (tk.TclError, AttributeError):
-            pass
-
-    def _fit_content_width(self, _event=None):
-        """Keep the inner content frame as wide as the canvas so the
-        3-column button grid always fills the visible width."""
-        try:
-            width = self._content_canvas.winfo_width()
-            for item in self._content_canvas.find_all():
-                self._content_canvas.itemconfigure(item, width=width)
-        except tk.TclError:
-            pass
+        self._latest_panel = None
+        for canvas in list(self._page_canvas.values()):
+            try:
+                canvas.yview_moveto(0.0)
+            except (tk.TclError, AttributeError):
+                pass
 
     def _scroll_content_wheel(self, event):
-        """Mouse-wheel scrolling for the content area. Bound app-wide
-        (bind_all) but only acts when the pointer is actually over this
-        tab's content, so it never hijacks scrolling in DEA's other tabs
+        """Mouse-wheel scrolling for the page canvases. Bound app-wide
+        (bind_all) but only acts when the pointer is actually over one of
+        this tab's scroll regions (a page inner or the Latest panel's
+        rows), so it never hijacks scrolling in DEA's other tabs
         or dialogs."""
         try:
             widget = self.winfo_containing(event.x_root, event.y_root)
@@ -804,20 +838,26 @@ class Navigator(tk.Frame):
             return
         node = widget
         try:
-            while node is not None and node is not self._content_canvas and node is not self.content:
+            target = None
+            while node is not None:
+                if node in self._scroll_map:
+                    target = self._scroll_map[node]
+                    break
                 node = node.master
         except tk.TclError:
             return
-        if node is None:
+        if target is None:
             return
         try:
-            self._content_canvas.yview_scroll(-1 * (event.delta // 120), "units")
+            target.yview_scroll(-1 * (event.delta // 120), "units")
         except tk.TclError:
             pass
 
     def _show_placeholder(self, text="Select a job from the left."):
         self._clear_content()
-        _nb, page_folders, page_latest, page_quick = self._build_sub_notebook()
+        page_folders = self._page_inner["folders"]
+        page_latest = self._page_frames["latest"]
+        page_quick = self._page_inner["quick"]
         ttk.Label(page_folders, text=text, style="Sub.TLabel",
                   font=("Segoe UI", 11)).grid(row=0, column=0, columnspan=3, pady=(30, 10))
         # No job selected: the folders page is just the placeholder, quick
@@ -920,7 +960,7 @@ class Navigator(tk.Frame):
         token = self._job_token
         name = self.current_job
         self._clear_content()
-        ttk.Label(self.content, text="Loading '{}'...".format(name),
+        ttk.Label(self._page_inner["folders"], text="Loading '{}'...".format(name),
                   style="Sub.TLabel", font=("Segoe UI", 11)).grid(
                       row=0, column=0, columnspan=3, pady=(30, 10))
 
@@ -937,7 +977,7 @@ class Navigator(tk.Frame):
                 if token != self._job_token or self.current_job != name:
                     return  # user moved on; drop this stale result
                 try:
-                    if not self.content.winfo_exists():
+                    if not self.winfo_exists():
                         return
                 except tk.TclError:
                     return
@@ -955,50 +995,41 @@ class Navigator(tk.Frame):
 
     def _jump_to_latest(self):
         """'Latest Details...' beside Add to Favorites: flip to the
-        Latest Details sub-tab and scroll it into view."""
+        Latest Details sub-tab and scroll its rows into view."""
         if not self.current_job:
             self.status_var.set("Select a job from the list first, then click Latest Details.")
             return
-        nb = getattr(self, "_sub_nb", None)
-        page = getattr(self, "_page_latest", None)
-        if nb is not None and page is not None:
-            try:
-                nb.select(page)
-            except tk.TclError:
-                pass
         try:
-            self._content_canvas.yview_moveto(0.0)
+            self._sub_nb.select(self._page_latest)
         except tk.TclError:
             pass
-
-    def _build_sub_notebook(self):
-        """Job Folders | Latest Details | Quick Links tabs hosting a
-        render. Returns (notebook, folders_page, latest_page, links_page)."""
-        nb = ttk.Notebook(self.content)
-        nb.grid(row=0, column=0, columnspan=3, sticky="nsew")
-        self._sub_nb = nb
-        page_folders = ttk.Frame(nb, style="App.TFrame")
-        page_latest = ttk.Frame(nb, style="App.TFrame")
-        page_quick = ttk.Frame(nb, style="App.TFrame")
-        nb.add(page_folders, text="Job Folders")
-        nb.add(page_latest, text="Latest Details")
-        nb.add(page_quick, text="Quick Links")
-        self._page_latest = page_latest
-        for pg in (page_folders, page_latest, page_quick):
-            pg.grid_columnconfigure(0, weight=1, uniform="btn")
-            pg.grid_columnconfigure(1, weight=1, uniform="btn")
-            pg.grid_columnconfigure(2, weight=1, uniform="btn")
-        return nb, page_folders, page_latest, page_quick
+        panel = getattr(self, "_latest_panel", None)
+        if panel is not None:
+            try:
+                panel.scroll_top()
+            except (tk.TclError, AttributeError):
+                pass
 
     def _mount_latest_panel(self, page):
-        """Latest Details panel on the sub-notebook's second page. Lazy
-        import avoids a circular import (that module imports JOB_ROOT
-        etc. from here). Recreated per render; instant cache paint keeps
-        it free, and its token guard drops stale background results."""
+        """Latest Details panel filling the Latest page (fixed header +
+        family tabs above its own rows canvas - the page itself does not
+        scroll). Lazy import avoids a circular import (that module imports
+        JOB_ROOT etc. from here). Recreated per render; instant cache
+        paint keeps it free, and its token guard drops stale background
+        results."""
         from client.latest_details_tab import LatestDetailsTab
         self._latest_panel = LatestDetailsTab(page, lambda: self.current_job,
                                               embedded=True)
-        self._latest_panel.pack(fill="x")
+        self._latest_panel.pack(fill="both", expand=True)
+        rows_canvas = getattr(self._latest_panel, "_rows_canvas", None)
+        self._scroll_map = {k: v for k, v in self._scroll_map.items()
+                            if k in self._page_inner.values()}
+        if rows_canvas is not None:
+            try:
+                rows_inner = self._latest_panel._rows_inner
+                self._scroll_map[rows_inner] = rows_canvas
+            except AttributeError:
+                pass
         self._latest_panel.refresh()
 
     def _render_sections(self, sections):
@@ -1014,7 +1045,9 @@ class Navigator(tk.Frame):
         width += 2
 
         row = 0
-        _nb, page_folders, page_latest, page_quick = self._build_sub_notebook()
+        page_folders = self._page_inner["folders"]
+        page_latest = self._page_frames["latest"]
+        page_quick = self._page_inner["quick"]
         # Stage groups keep their collapsible arrow-toggle, but the toggle
         # shows ONLY the arrow - no title text. Only QUICK LINKS keeps a
         # titled header (see _render_quick_links). Each group still gets
