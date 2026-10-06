@@ -639,6 +639,7 @@ class Navigator(tk.Frame):
         sidebar.grid(row=0, column=0, sticky="ns")
         sidebar.configure(width=265)
         sidebar.grid_propagate(False)
+        self._sidebar = sidebar
 
         ttk.Label(sidebar, text="NAVITOOL 2.0", style="Sidebar.TLabel",
                   font=("Segoe UI", 14, "bold")).pack(anchor="w", pady=(0, 18))
@@ -785,6 +786,24 @@ class Navigator(tk.Frame):
         self.bind_all("<MouseWheel>", self._scroll_content_wheel, add="+")
 
         self._show_placeholder()
+        self._fit_sidebar_width()
+
+    def _fit_sidebar_width(self):
+        """Size the sidebar to its content, in real pixels on this machine
+        (a fixed width clips names under display scaling). Widest favorite
+        / job text plus padding, clamped so one long name can't eat the
+        window. Re-run when the job list changes, not on every keystroke
+        of the search box (stability over twitchiness)."""
+        try:
+            import tkinter.font as tkfont
+            font = tkfont.Font(root=self, family="Segoe UI", size=9)
+            texts = list(self.job_list.get(0, "end")) + \
+                list(self.fav_list.get(0, "end"))
+            widest = max([font.measure(t) for t in texts if t] + [0])
+            width = min(max(widest + 28 + 14, 220), 360)
+            self._sidebar.configure(width=width)
+        except Exception:
+            pass
 
     def _fit_canvas_width(self, canvas):
         """Keep a page canvas's inner frame as wide as the canvas so the
@@ -833,6 +852,7 @@ class Navigator(tk.Frame):
             if stale:
                 save_section_cache(self._folder_cache)
         self.filter_jobs()
+        self._fit_sidebar_width()
         self._prewarm(force=True)
         if self.current_job and self.current_job in self.jobs:
             with self._cache_lock:
@@ -1349,6 +1369,7 @@ class Navigator(tk.Frame):
             self.fav_list.insert("end", "\u2605  {}".format(f))
         if not favs:
             self.fav_list.insert("end", "  (no favorites yet)")
+        self._fit_sidebar_width()
 
     def _on_favorite_select(self, _=None):
         sel = self.fav_list.curselection()

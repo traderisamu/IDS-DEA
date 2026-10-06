@@ -966,13 +966,23 @@ class LatestDetailsTab(ttk.Frame):
                             command=self._on_side_changed).pack(side="left", padx=4)
 
         hint = self._tlabel(self, padding=(10, 2, 10, 0), font=("Segoe UI", 8),
-                                foreground="#68727d", wraplength=900, justify="left",
+                                foreground="#68727d", justify="left",
                          text="Newest issued detail + map per connection for the job "
                               "selected in NaviTool 2.0 - one tab per family, maps "
-                              "in their own rows. Click a file name to open the PDF. "
-                              "Note: Latest Details is experimental - always confirm "
-                              "against the folders before issuing.")
+                              "in their own rows. Click a file name to open the PDF.")
         hint.pack(fill="x")
+        warn = self._tlabel(self, padding=(10, 0, 10, 0),
+                            font=("Segoe UI", 8, "bold"),
+                            foreground="#B26A00", justify="left",
+                            text="\u26a0 Note: Latest Details is experimental - "
+                                 "always confirm against the folders before issuing.")
+        warn.pack(fill="x")
+        # Both lines wrap to the actual panel width (a fixed wraplength
+        # overflows narrow windows); height-only change, so no layout loop.
+        for _lbl in (hint, warn):
+            _lbl.bind("<Configure>",
+                      lambda e, L=_lbl: L.configure(wraplength=max(e.width - 24, 120)))
+        self._warn_label = warn
 
         prog = ttk.Frame(self, padding=(10, 2, 10, 0))
         prog.pack(fill="x")
