@@ -286,7 +286,9 @@ Links**. Folder menus nest as deep as the drive goes — e.g. BS ›
 CALCS › BS01, Shop Drawings › For Approval › Seq 01, RFI Sent › Seq,
 CD › Approval Returns › CD#015, SKETCHES › sub › sub — and every level
 stays clickable (each menu is headed by its folder's own name) so you
-can open just BS or BS › CALCS when that's all you want. The **Latest
+can open just BS or BS › CALCS when that's all you want. Opening a
+job for the first time shows a loading row (live phase, Cancel button)
+while its folders are read; cached jobs open instantly. The **Latest
 Details...** button (beside Add to Favorites) jumps to the Latest
 Details tab.
 
@@ -318,7 +320,8 @@ detailer yet), reference/layout suffixed copies, and dateless REVs are
 skipped. First visit scans with a progress bar (parallel listing, dead
 trees never entered — about 11s on the biggest job); later visits paint
 instantly from cache and refresh silently in the background (Cancel
-stops a slow scan, Refresh forces a full one).
+stops a slow scan, Refresh forces a full one). Note: Latest Details is
+experimental - always confirm against the folders before issuing.
 
 **Dashboard tab** (3rd tab) — one scrolling page: the **Link
 Generator** on top (drop files/folders straight onto the table, or Add

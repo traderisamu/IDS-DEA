@@ -86,11 +86,28 @@ def _cascade_or_open(base, rel, label=None):
     return rel
 
 
-def build_job_sections(job_name):
+def build_job_sections(job_name, progress=None, cancel=None):
     """Return [(title, [item, ...]), ...]. An item is either
     {"kind":"button", label, rel, icon} or
     {"kind":"dropdown", label, icon, menu:[(menu_label, rel-or-children), ...]}
-    where a nested list value is a further cascade (see _folder_menu)."""
+    where a nested list value is a further cascade (see _folder_menu).
+
+    progress(phase_text) reports where the background build is (same
+    contract as the Latest Details scan); cancel() returning True aborts
+    with None (the caller keeps its placeholder and caches nothing)."""
+    def _report(text):
+        if progress:
+            try:
+                progress(text)
+            except Exception:
+                pass
+
+    def _aborted():
+        try:
+            return bool(cancel and cancel())
+        except Exception:
+            return False
+
     base = os.path.join(JOB_ROOT, job_name)
     code = parse_job_code(job_name)
     if not code:
@@ -108,27 +125,42 @@ def build_job_sections(job_name):
     if _exists(base, mathcad):
         menu = [("CALCS", sc("CALCS")), ("-", None)]
         for sub in ("MISC", "STRUCTURAL"):
+            if _aborted():
+                return None
             root = mathcad + "\\" + sub
             if _exists(base, root):
                 submenu = [(sub, root), ("-", None)]
-                for name in _dir_entries(base, root):
+                names = _dir_entries(base, root)
+                for i, name in enumerate(names):
+                    if _aborted():
+                        return None
                     conn = root + "\\" + name
                     submenu.append((name, _folder_menu(base, conn)))
+                    _report("Reading CALCS… {}/{}".format(i + 1, len(names)))
                 menu.append((sub, submenu))
         calcs.append({"kind": "dropdown", "label": "CALCS", "icon": "\U0001F9EE", "menu": menu})
     elif _exists(base, sc("CALCS")):
         calcs.append({"kind": "button", "label": "CALCS", "icon": "\U0001F9EE",
                       "rel": sc("CALCS"), "menu": None})
+    if _aborted():
+        return None
     sent = sc("CALCS", "SENT CALCS")
     if _exists(base, sent):
         menu = [("SENT CALCS", sent), ("-", None)]
-        for name in _dir_entries(base, sent):
+        names = _dir_entries(base, sent)
+        for i, name in enumerate(names):
+            if _aborted():
+                return None
             menu.append((name, sent + "\\" + name))
+            _report("Reading SENT CALCS… {}/{}".format(i + 1, len(names)))
         calcs.append({"kind": "dropdown", "label": "SENT CALCS", "icon": "\U0001F4E4", "menu": menu})
     if calcs:
         sections.append(("CALCS", calcs))
 
     # ---------- Initial proceedings ----------
+    if _aborted():
+        return None
+    _report("Reading INITIAL…")
     initial = []
     dd_root = sc("DESIGN DRAWINGS")
     if _exists(base, dd_root):
@@ -156,13 +188,20 @@ def build_job_sections(job_name):
     rfi = sc("RFI")
     if _exists(base, rfi):
         menu = [("RFI", rfi), ("-", None)]
-        for sub in ("RFI SENT", "RFI RESPONSE"):
+        subs = [s for s in ("RFI SENT", "RFI RESPONSE")
+                if _exists(base, rfi + "\\" + s)]
+        for i, sub in enumerate(subs):
+            if _aborted():
+                return None
             root = rfi + "\\" + sub
-            if _exists(base, root):
-                menu.append((sub, _cascade_or_open(base, root, sub)))
+            menu.append((sub, _cascade_or_open(base, root, sub)))
+            _report("Reading RFI… {}/{}".format(i + 1, len(subs)))
         initial.append({"kind": "dropdown", "label": "RFI", "icon": "\U0001F4E9", "menu": menu})
     sk = sc("SKETCHES")
     if _exists(base, sk):
+        if _aborted():
+            return None
+        _report("Reading SKETCHES…")
         if _dir_entries(base, sk):
             initial.append({"kind": "dropdown", "label": "SKETCHES", "icon": "\u270F",
                             "menu": _folder_menu(base, sk, label="SKETCHES")})
@@ -173,6 +212,9 @@ def build_job_sections(job_name):
         sections.append(("INITIAL", initial))
 
     # ---------- Submittal stage ----------
+    if _aborted():
+        return None
+    _report("Reading SUBMITTAL…")
     submittal = []
     if _exists(base, sc("SUBMITTAL")):
         submittal.append({"kind": "button", "label": "SUBMITTAL", "icon": "\U0001F4E4",
@@ -180,18 +222,25 @@ def build_job_sections(job_name):
     det_root = sc("DETAILING")
     if _exists(base, det_root):
         menu = [("DETAILING", det_root), ("-", None)]
-        for sub in ("SHOP DRAWINGS", "LAYOUT"):
+        subs = [s for s in ("SHOP DRAWINGS", "LAYOUT")
+                if _exists(base, det_root + "\\" + s)]
+        for i, sub in enumerate(subs):
+            if _aborted():
+                return None
             root = det_root + "\\" + sub
-            if _exists(base, root):
-                # DESIGN COMMENTS (and For Approval / Seq XX levels) live
-                # under SHOP DRAWINGS and surface through the recursion.
-                menu.append((sub, _cascade_or_open(base, root, sub)))
+            # DESIGN COMMENTS (and For Approval / Seq XX levels) live
+            # under SHOP DRAWINGS and surface through the recursion.
+            menu.append((sub, _cascade_or_open(base, root, sub)))
+            _report("Reading DETAILING… {}/{}".format(i + 1, len(subs)))
         submittal.append({"kind": "dropdown", "label": "DETAILING",
                           "icon": "\U0001F3D7", "menu": menu})
     if submittal:
         sections.append(("SUBMITTAL", submittal))
 
     # ---------- Fabrication stage ----------
+    if _aborted():
+        return None
+    _report("Reading FABRICATION…")
     fab = []
     if _exists(base, sc("APPROVAL SUMMARY")):
         fab.append({"kind": "button", "label": "APPROVAL SUMMARY", "icon": "\U0001F4CA",
@@ -201,9 +250,13 @@ def build_job_sections(job_name):
         cd_target = cd_root + "\\APPROVAL RETURNS"
         if _exists(base, cd_target) and _dir_entries(base, cd_target):
             menu = [("CD", cd_target), ("-", None)]
-            for name in _dir_entries(base, cd_target):
+            names = _dir_entries(base, cd_target)
+            for i, name in enumerate(names):
+                if _aborted():
+                    return None
                 rel = cd_target + "\\" + name
                 menu.append((name, _cascade_or_open(base, rel, name)))
+                _report("Reading CD… {}/{}".format(i + 1, len(names)))
             fab.append({"kind": "dropdown", "label": "CD", "icon": "\U0001F4DD",
                         "menu": menu})
         else:
@@ -213,6 +266,8 @@ def build_job_sections(job_name):
     if fab:
         sections.append(("FABRICATION", fab))
 
+    if _aborted():
+        return None
     return sections
 
 
@@ -635,7 +690,7 @@ class Navigator(tk.Frame):
         main = ttk.Frame(self, style="App.TFrame", padding=(22, 18))
         main.grid(row=0, column=1, sticky="nsew")
         main.grid_columnconfigure(0, weight=1)
-        main.grid_rowconfigure(3, weight=1)
+        main.grid_rowconfigure(4, weight=1)
 
         top = ttk.Frame(main, style="App.TFrame")
         top.grid(row=0, column=0, sticky="ew")
@@ -653,7 +708,7 @@ class Navigator(tk.Frame):
 
         self.status_var = tk.StringVar(value="")
         status = ttk.Label(main, textvariable=self.status_var, style="Sub.TLabel")
-        status.grid(row=2, column=0, sticky="w", pady=(0, 4))
+        status.grid(row=3, column=0, sticky="w", pady=(0, 4))
 
         def _sync_status_row(*_args):
             # The status line only takes up space while it has something to
@@ -666,6 +721,24 @@ class Navigator(tk.Frame):
         self.status_var.trace_add("write", _sync_status_row)
         _sync_status_row()
 
+        # Job-folders loading row: shown only while a background section
+        # build runs (cache misses) - phase text, indeterminate bar (a
+        # determinate total would cost a full pre-walk just for counting),
+        # and a Cancel button. Mirrors the Latest Details progress row.
+        prog = ttk.Frame(main, style="App.TFrame")
+        prog.grid(row=2, column=0, sticky="ew", pady=(0, 4))
+        self._folders_prog_label = ttk.Label(prog, text="", style="Sub.TLabel",
+                                             font=("Segoe UI", 8))
+        self._folders_prog_label.pack(side="left")
+        self._folders_cancel_btn = ttk.Button(prog, text="Cancel",
+                                              command=self._cancel_folders_build)
+        self._folders_prog_bar = ttk.Progressbar(prog, mode="indeterminate",
+                                                 length=180)
+        self._folders_prog_bar.pack(side="right", padx=(6, 0))
+        self._folders_prog = prog
+        self._folders_cancel = None
+        self._set_folders_progress_visible(False)
+
         # Fixed tab strip + one scroll region per page: the Job Folders /
         # Latest Details / Quick Links tabs never scroll away; each page
         # scrolls its own content (exactly one canvas per scrolling page,
@@ -673,7 +746,7 @@ class Navigator(tk.Frame):
         # page holds only the panel, which freezes its own header and
         # family tabs above its rows canvas (see _mount_latest_panel).
         content_wrap = ttk.Frame(main, style="App.TFrame")
-        content_wrap.grid(row=3, column=0, sticky="nsew")
+        content_wrap.grid(row=4, column=0, sticky="nsew")
         content_wrap.grid_columnconfigure(0, weight=1)
         content_wrap.grid_rowconfigure(1, weight=1)
         self._sub_nb = ttk.Notebook(content_wrap)
@@ -939,14 +1012,49 @@ class Navigator(tk.Frame):
             return
         self._render_sections(self._get_sections(self.current_job))
 
+    def _set_folders_progress_visible(self, visible):
+        try:
+            if visible:
+                self._folders_prog.grid()
+                self._folders_cancel_btn.pack(side="right")
+                self._folders_prog_bar.pack(side="right", padx=(6, 0))
+                try:
+                    self._folders_prog_bar.start(50)
+                except tk.TclError:
+                    pass
+                self._folders_prog_label.config(text="Starting…")
+            else:
+                try:
+                    self._folders_prog_bar.stop()
+                except tk.TclError:
+                    pass
+                self._folders_prog.grid_remove()
+        except tk.TclError:
+            pass
+
+    def _update_folders_progress(self, token, text):
+        if token != self._job_token:
+            return
+        try:
+            self._folders_prog_label.config(text=text)
+        except tk.TclError:
+            pass
+
+    def _cancel_folders_build(self):
+        if self._folders_cancel is not None:
+            try:
+                self._folders_cancel.set()
+            except Exception:
+                pass
+
     def _show_job_async(self):
         """Click path: paint instantly, never block the UI on the network.
 
         - Cache hit  -> render immediately (no thread, no flicker).
         - Cache miss -> show a "Loading..." placeholder at once, build the
-          sections in a background thread, then paint via after(). A token
-          guard drops stale results when the user clicks another job
-          before the build finishes."""
+          sections in a background thread with a progress row (cancellable),
+          then paint via after(). A token guard drops stale results when
+          the user clicks another job before the build finishes."""
         self._clear_content()
         if not self.current_job:
             self._show_placeholder()
@@ -959,39 +1067,56 @@ class Navigator(tk.Frame):
         self._job_token += 1
         token = self._job_token
         name = self.current_job
+        if self._folders_cancel is not None:
+            try:
+                self._folders_cancel.set()
+            except Exception:
+                pass
+        cancel = threading.Event()
+        self._folders_cancel = cancel
         self._clear_content()
         ttk.Label(self._page_inner["folders"], text="Loading '{}'...".format(name),
                   style="Sub.TLabel", font=("Segoe UI", 11)).grid(
                       row=0, column=0, columnspan=3, pady=(30, 10))
+        self._set_folders_progress_visible(True)
+
+        def on_progress(text):
+            try:
+                self.after(0, lambda: self._update_folders_progress(token, text))
+            except Exception:
+                pass
 
         def work():
             try:
-                sections = build_job_sections(name)
+                sections = build_job_sections(name, progress=on_progress,
+                                              cancel=cancel.is_set)
             except Exception:
                 sections = []
-            with self._cache_lock:
-                self._folder_cache[name] = sections
-                save_section_cache(self._folder_cache)
-
-            def paint():
-                if token != self._job_token or self.current_job != name:
-                    return  # user moved on; drop this stale result
-                try:
-                    if not self.winfo_exists():
-                        return
-                except tk.TclError:
-                    return
-                self._clear_content()
-                self._render_sections(sections)
             try:
-                self.after(0, paint)
+                self.after(0, lambda: self._finish_folders(token, name, sections))
             except Exception:
-                # App is shutting down (interpreter teardown raises
-                # RuntimeError, a destroyed widget raises TclError) -
-                # nothing left to paint into.
                 pass
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _finish_folders(self, token, name, sections):
+        if token != self._job_token or self.current_job != name:
+            return  # user moved on; drop this stale result
+        self._set_folders_progress_visible(False)
+        if sections is None:
+            # Cancelled - keep the placeholder, note how to retry.
+            self.status_var.set("Loading cancelled - click the job again to retry.")
+            return
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        with self._cache_lock:
+            self._folder_cache[name] = sections
+            save_section_cache(self._folder_cache)
+        self._clear_content()
+        self._render_sections(sections)
 
     def _jump_to_latest(self):
         """'Latest Details...' beside Add to Favorites: flip to the

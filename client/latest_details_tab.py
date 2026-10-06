@@ -969,7 +969,9 @@ class LatestDetailsTab(ttk.Frame):
                                 foreground="#68727d", wraplength=900, justify="left",
                          text="Newest issued detail + map per connection for the job "
                               "selected in NaviTool 2.0 - one tab per family, maps "
-                              "in their own rows. Click a file name to open the PDF.")
+                              "in their own rows. Click a file name to open the PDF. "
+                              "Note: Latest Details is experimental - always confirm "
+                              "against the folders before issuing.")
         hint.pack(fill="x")
 
         prog = ttk.Frame(self, padding=(10, 2, 10, 0))
