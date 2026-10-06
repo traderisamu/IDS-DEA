@@ -128,14 +128,18 @@ def parse_detail_name(filename):
 def _pruned_dir(name):
     """Subtrees that can never hold a rankable issued detail: sent-calc
     bundles (dateless REV00-03), review areas, models/backups, reference
-    and void drops. Verified against Trinity/JPI/FBD - the winners test
-    guards this list (any miss shows up as a diff)."""
+    and void drops, and archived OLD packages (their dated contents also
+    exist as working-tree copies - verified on FBD). Verified against
+    Trinity/JPI/FBD/SAB - the winners test guards this list (any miss
+    shows up as a diff)."""
     u = (name or "").upper()
     if u in ("SENT CALCS", "TO EQA", "MODEL", "BACKUP", "CAD", "SK", "VOID",
              "REF", "RISA INPUT", "RISA OUTPUT", "CAD+SKETCH", "OTHER RUNS",
              "CBFEM"):
         return True
-    if u.startswith(("BACKUP", "RISA", "VOID", "CHECKING", "FULL CALC",
+    if re.match(r"^(OLD|VOID|REF)\b", u):
+        return True
+    if u.startswith(("BACKUP", "RISA", "CHECKING", "FULL CALC",
                      "MUSTAFA")):
         return True
     return False
@@ -592,6 +596,8 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
         return _pkg_resolve
 
     for pkg in packages:
+        if _pruned_dir(pkg):
+            continue  # archived containers (OLD) - dated children covered below
         pkg_abs = os.path.join(subm_root, pkg)
         pkg_tail = os.path.join("{}_SUBMITTAL".format(code), pkg)
         # The package's own top files keep its name, but each child
@@ -910,6 +916,10 @@ class LatestDetailsTab(ttk.Frame):
         self._last_side = None
         self._cancel = None
         self._shown = None  # (job, side, rows) currently painted
+        self._fam_names = []
+        self._fam_rows = {}
+        self._fam_job = None
+        self._fam_show_maps = True
         self._prog_last = 0.0
         try:
             self._side = tk.StringVar(
@@ -1179,29 +1189,58 @@ class LatestDetailsTab(ttk.Frame):
                           "package.".format(job, SIDE_LABELS[side]))
             return
         show_maps = side != "MISC"  # misc (stairs/rails/ladders/gates/EC) has no maps
-        # Family tabs live in the fixed slot above the rows canvas, so
-        # they never scroll away either.
+        # Family tabs are a fixed selector above the rows canvas; only
+        # the selected family's rows live in the scrolling body, so long
+        # lists (FBD MC) actually scroll.
+        self._fam_names = [f for f in sorted(rows, key=str.lower) if f != "OTHER"]
+        # OTHER collects the unplaceable leftovers - always the last tab.
+        if "OTHER" in rows:
+            self._fam_names.append("OTHER")
+        self._fam_rows = rows
+        self._fam_job = job
+        self._fam_show_maps = show_maps
         nb = ttk.Notebook(self._fam_slot)
         nb.pack(fill="x")
-        fams = sorted(rows, key=str.lower)
-        # OTHER collects the unplaceable leftovers - always the last tab.
-        fams = [f for f in fams if f != "OTHER"]
-        if "OTHER" in rows:
-            fams.append("OTHER")
-        for family in fams:
-            page = ttk.Frame(nb)
+        for family in self._fam_names:
+            pg = ttk.Frame(nb)
             if self._ebg is not None:
-                page.configure(style="App.TFrame")
-            nb.add(page, text=family)
-            self._paint_family(page, job, family, rows[family], show_maps)
+                pg.configure(style="App.TFrame")
+            nb.add(pg, text=family)
         self._fam_nb = nb
+        nb.bind("<<NotebookTabChanged>>", lambda _e: self._paint_selected_family())
+        self._paint_selected_family()
+
+    def _paint_selected_family(self):
+        nb = self._fam_nb
+        if nb is None:
+            return
+        try:
+            family = self._fam_names[nb.index(nb.select())]
+        except (tk.TclError, IndexError, AttributeError, TypeError):
+            return
+        self._paint_rows(family)
+
+    def _paint_rows(self, family):
+        try:
+            if not self.body.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        for w in self.body.winfo_children():
+            w.destroy()
+        self.body.grid_columnconfigure(1, weight=1)
+        self._paint_family(self.body, self._fam_job, family,
+                           self._fam_rows[family], self._fam_show_maps)
+        try:
+            self._rows_canvas.yview_moveto(0.0)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _paint_family(self, page, job, family, fdata, show_maps):
         """One family tab: connection calc rows, then a MAPS block with
-        one row per map (structural only). The STAIRS tab additionally
-        splits into whole-stair rows, an EC block and a RAILS block -
-        the same idea as MAPS, for stair ECs and stair rails. No map
-        column anywhere."""
+        one row per map (structural only). STAIRS splits further into
+        whole-stair rows plus EC and RAILS blocks; RAILINGS splits off an
+        EC block the same way. No map column anywhere."""
         headers = ("Connection", "Latest calc detail", "")
         for col, text in enumerate(headers):
             self._tlabel(page, text=text,
@@ -1211,28 +1250,30 @@ class LatestDetailsTab(ttk.Frame):
         calc_groups = sorted(
             (g for g, d in fdata.items() if d["calc"]),
             key=lambda g: fdata[g].get("label") or g)
-        if family == "STAIRS":
-            blocks = [("main", [g for g in calc_groups
-                                if _stairs_block(fdata[g].get("label") or g) == 0]),
-                      ("\u2014 EC \u2014", [g for g in calc_groups
-                                            if _stairs_block(fdata[g].get("label") or g) == 1]),
-                      ("\u2014 RAILS \u2014", [g for g in calc_groups
-                                               if _stairs_block(fdata[g].get("label") or g) == 2])]
-            for title, members in blocks:
-                if title != "main" and members:
-                    self._tlabel(page, text=title,
-                                 font=("Segoe UI", 9, "bold"),
-                                 foreground="#20252b").grid(row=row_idx, column=0,
-                                                            columnspan=3, sticky="w",
-                                                            padx=8, pady=(10, 2))
-                    row_idx += 1
-                for group in members:
-                    row_idx = self._paint_row(page, job, row_idx,
-                                              fdata[group].get("label") or group,
-                                              fdata[group]["calc"],
-                                              fdata[group]["folder"])
-        else:
-            for group in calc_groups:
+        blocks = [("main", calc_groups)]
+        if family in ("STAIRS", "RAILINGS"):
+            ec = [g for g in calc_groups
+                  if _EC_TOKEN_RE.search(fdata[g].get("label") or g)]
+            rest = [g for g in calc_groups if g not in set(ec)]
+            if family == "STAIRS":
+                rail = [g for g in rest
+                        if _stairs_block(fdata[g].get("label") or g) == 2]
+                main = [g for g in rest if g not in set(rail)]
+                blocks = [("main", main),
+                          ("\u2014 EC \u2014", ec),
+                          ("\u2014 RAILS \u2014", rail)]
+            else:
+                blocks = [("main", rest),
+                          ("\u2014 EC \u2014", ec)]
+        for title, members in blocks:
+            if title != "main" and members:
+                self._tlabel(page, text=title,
+                             font=("Segoe UI", 9, "bold"),
+                             foreground="#20252b").grid(row=row_idx, column=0,
+                                                        columnspan=3, sticky="w",
+                                                        padx=8, pady=(10, 2))
+                row_idx += 1
+            for group in members:
                 row_idx = self._paint_row(page, job, row_idx,
                                           fdata[group].get("label") or group,
                                           fdata[group]["calc"],

@@ -1026,7 +1026,7 @@ class Navigator(tk.Frame):
                             if k in self._page_inner.values()}
         if rows_canvas is not None:
             try:
-                rows_inner = self._latest_panel._rows_inner
+                rows_inner = self._latest_panel.body
                 self._scroll_map[rows_inner] = rows_canvas
             except AttributeError:
                 pass
