@@ -434,10 +434,16 @@ def get_admin_links():
 
 def load_admin_credentials():
     """Username/password that unlock the admin quick-link editor, read live
-    from the 'App Settings' sheet of the shared DEA_Config.xlsx."""
+    from the 'App Settings' sheet of the shared DEA_Config.xlsx. Goes
+    through the shared config opener so a file-open-encrypted config still
+    works (falls back to a plain openpyxl read when run standalone)."""
     try:
-        import openpyxl
-        wb = openpyxl.load_workbook(DEA_CONFIG, data_only=True, read_only=True)
+        try:
+            from shared.config_manager import open_config_workbook
+            wb = open_config_workbook(DEA_CONFIG)
+        except ImportError:
+            import openpyxl
+            wb = openpyxl.load_workbook(DEA_CONFIG, data_only=True, read_only=True)
         try:
             if "App Settings" not in wb.sheetnames:
                 return None

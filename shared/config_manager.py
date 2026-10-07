@@ -19,6 +19,58 @@ class ConfigError(Exception):
     pass
 
 
+# OLE compound-document magic: a password-encrypted .xlsx is an OLE
+# container, while a plain .xlsx is a ZIP ("PK.."). Lets us tell
+# "encrypted, needs the password" apart from "corrupt/unreadable".
+_OLE_SIGNATURE = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
+
+
+def _looks_encrypted(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read(8) == _OLE_SIGNATURE
+    except OSError:
+        return False
+
+
+def open_config_workbook(path):
+    """Opens DEA_Config.xlsx whether it is plain or file-open-encrypted.
+
+    Plain files load directly (pre-encryption rollout, local seed copies).
+    Encrypted files are decrypted in memory with the bundled
+    CONFIG_FILE_PASSWORD - no plaintext copy ever touches disk. Raises
+    ConfigError with an actionable message instead of a raw traceback
+    when decryption fails (old build, or password rotated without a
+    matching app update)."""
+    try:
+        return openpyxl.load_workbook(path, data_only=True, read_only=True)
+    except Exception:
+        if not os.path.isfile(path) or not _looks_encrypted(path):
+            raise
+    try:
+        import io
+        import msoffcrypto
+        buf = io.BytesIO()
+        with open(path, "rb") as f:
+            office_file = msoffcrypto.OfficeFile(f)
+            office_file.load_key(password=C.CONFIG_FILE_PASSWORD)
+            office_file.decrypt(buf)
+        buf.seek(0)
+        wb = openpyxl.load_workbook(buf, data_only=True, read_only=True)
+        # read_only streams lazily from `buf` - keep it alive with the book.
+        wb._decrypted_config_buf = buf
+        return wb
+    except ConfigError:
+        raise
+    except Exception as e:
+        raise ConfigError(
+            "Could not open the password-protected config file - this app "
+            "build could not decrypt it. Update to the latest build; if it "
+            "still fails, the config password was changed without shipping "
+            "a matching app update."
+        ) from e
+
+
 class AppConfig:
     """Holds one snapshot of the config workbook contents."""
 
@@ -182,7 +234,7 @@ def _read_config_file(path):
     if not os.path.isfile(path):
         raise ConfigError(f"Config file not found:\n{path}")
 
-    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    wb = open_config_workbook(path)
     cfg = AppConfig()
     cfg.source_path = path
 

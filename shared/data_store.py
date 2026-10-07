@@ -311,6 +311,47 @@ def _entered_at_str(v):
     return str(v)
 
 
+def _log_sort_key(date_val, entered_val, orig_row):
+    """Sort key keeping a Log sheet newest-first: date descending, then
+    Entered At descending, then original row descending (so the later of
+    two identical rows stays on top). Anything unparseable or blank sinks
+    to the bottom instead of crashing the sort - user-edited cells can be
+    datetime, date, or free text."""
+    if isinstance(date_val, dt.datetime):
+        d = date_val
+    elif isinstance(date_val, dt.date):
+        d = dt.datetime(date_val.year, date_val.month, date_val.day)
+    else:
+        try:
+            d = dt.datetime.fromisoformat(str(date_val).strip()[:10])
+        except (ValueError, TypeError, AttributeError):
+            d = dt.datetime.min
+    return (d, _entered_at_str(entered_val), orig_row)
+
+
+def _sort_log_sheet_newest_first(ws):
+    """Rewrites the Log sheet's data rows newest-first (date desc, then
+    Entered At desc). Header row, freeze panes, column layout, and the
+    DayStatus sheet are untouched; body font is reapplied to rewritten
+    cells. Runs on every add/update, which also lazily migrates older
+    oldest-first files the next time they are written to."""
+    rows = []
+    for row in ws.iter_rows(min_row=2, max_col=7):
+        if all(c.value is None for c in row):
+            continue
+        rows.append([c.value for c in row])
+    indexed = list(enumerate(rows))
+    indexed.sort(key=lambda t: _log_sort_key(
+        t[1][0], t[1][6] if len(t[1]) > 6 else None, t[0]), reverse=True)
+    for i, (_, values) in enumerate(indexed, start=2):
+        for col, val in enumerate(values, start=1):
+            ws.cell(row=i, column=col, value=val).font = BODY_FONT
+    # Drop any stale rows left below (e.g. interior blank rows compacted out).
+    last = len(indexed) + 1
+    if ws.max_row > last:
+        ws.delete_rows(last + 1, ws.max_row - last)
+
+
 def add_log_entry(shared_path, employee_name, entry_date, job, work_desc, hours, details, remarks):
     """entry_date: datetime.date. Returns the new total hours for that date."""
     path = ensure_employee_file(shared_path, employee_name)
@@ -324,6 +365,7 @@ def add_log_entry(shared_path, employee_name, entry_date, job, work_desc, hours,
     ws.cell(row=next_row, column=5, value=details or "").font = BODY_FONT
     ws.cell(row=next_row, column=6, value=remarks or "").font = BODY_FONT
     ws.cell(row=next_row, column=7, value=dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")).font = BODY_FONT
+    _sort_log_sheet_newest_first(ws)
     _atomic_save(wb, path)
     wb.close()
     return get_day_total_hours(shared_path, employee_name, entry_date)
@@ -343,6 +385,7 @@ def update_log_entry(shared_path, employee_name, excel_row, job, work_desc, hour
     ws.cell(row=excel_row, column=5, value=details or "").font = BODY_FONT
     ws.cell(row=excel_row, column=6, value=remarks or "").font = BODY_FONT
     ws.cell(row=excel_row, column=7, value=dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")).font = BODY_FONT
+    _sort_log_sheet_newest_first(ws)  # an edit can change a row's position
     _atomic_save(wb, path)
     wb.close()
 

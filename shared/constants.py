@@ -9,7 +9,7 @@ APP_TITLE = "IDS PH - Daily Employee Accomplishment (DEA) Logger"
 # is manually rebuilt and redistributed rather than auto-updating, this
 # is the only way to tell at a glance (main window title bar + Admin
 # Dashboard) which PCs are still running an old build if a fix goes out.
-APP_VERSION = "2.6.6"
+APP_VERSION = "2.6.7"
 
 # Default network location of the config file + Logs folder.
 # Can be overridden per-machine via the local settings file
@@ -21,6 +21,15 @@ DEFAULT_SHARED_PATH = (
 
 CONFIG_FILENAME = "DEA_Config.xlsx"
 LOGS_SUBFOLDER = "Logs"
+
+# File-open password for DEA_Config.xlsx (Excel "Encrypt with Password").
+# Casual-deterrent only: it stops curious double-click browsing of the
+# shared config, but anyone with this private repo (or the built exe) can
+# read it straight out of here. Rotation = set the new password on the
+# workbook in Excel, update this constant, rebuild, redeploy - and always
+# ship the matching app BEFORE encrypting, since older builds cannot
+# decrypt at all.
+CONFIG_FILE_PASSWORD = "nimda"
 
 # Silent auto-update source: the shared folder where staged releases live
 # (IDS_DEA_Logger.exe + version.txt, copied there at rollout time - see

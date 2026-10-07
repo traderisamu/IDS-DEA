@@ -1,4 +1,8 @@
 openpyxl>=3.1.0
+# Decrypts the password-protected DEA_Config.xlsx in memory (decrypt-only
+# use - encryption itself is done once in Excel). openpyxl cannot open
+# encrypted workbooks on its own.
+msoffcrypto-tool==5.4.2
 pyinstaller>=6.0.0
 pystray>=0.19.5
 Pillow>=10.0.0

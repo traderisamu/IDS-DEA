@@ -574,6 +574,24 @@ behavior only comes from the 3rd/4th columns. The sheet lists plain
 (unmarked) items first, then `*`/`~`-marked ones at the end - that's
 just the row order in the sheet, so re-sort it however you like.
 
+**Password-protecting the config (optional, do this LAST):** the app
+(v2.6.7+) can read a file-open-encrypted `DEA_Config.xlsx`, which stops
+casual double-click browsing of the roster/admin credentials. Rollout
+order matters - older builds go blind the moment the file is encrypted:
+1. Ship the new build to everyone first (it reads plain and encrypted
+configs alike, so nothing changes yet).
+2. Open the shared `DEA_Config.xlsx` in Excel and set File -> Info ->
+Protect Workbook -> Encrypt with Password, using the same password as
+`CONFIG_FILE_PASSWORD` in `shared/constants.py`, then save.
+3. To rotate later: set the new password in Excel, update the constant,
+rebuild, redeploy - app first, file second, same as above.
+
+**Log row order:** each `Logs\<name>.xlsx` keeps its `Log` sheet sorted
+newest-first (date descending, then latest-entered first). Older files
+re-sort themselves on their next add/edit - expect the rows to jump the
+first time someone with the new build logs. Day totals, dashboards, and
+edit/delete are unaffected (they don't depend on row order).
+
 ## 8. If the shared path ever changes
 
 The app accepts either a UNC path (`\\Server\Share\Folder`) or a mapped
