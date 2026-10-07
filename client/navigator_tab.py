@@ -692,8 +692,6 @@ class Navigator(tk.Frame):
 
         ttk.Button(sidebar, text="\u21bb Refresh Jobs", command=self.refresh_jobs).pack(fill="x", pady=(10, 5))
 
-        ttk.Button(sidebar, text="\u2699 Quick Links", command=self.manage_links).pack(fill="x", pady=5)
-
         main = ttk.Frame(self, style="App.TFrame", padding=(22, 18))
         main.grid(row=0, column=1, sticky="nsew")
         main.grid_columnconfigure(0, weight=1)
@@ -711,7 +709,7 @@ class Navigator(tk.Frame):
         actions.grid(row=1, column=0, sticky="ew", pady=(10, 4))
         ttk.Button(actions, text="Open Job", command=self.open_current_job).pack(side="left")
         ttk.Button(actions, text="Add to Favorites", command=self.add_favorite).pack(side="left", padx=6)
-        ttk.Button(actions, text="Latest Details...", command=self._jump_to_latest).pack(side="left")
+        ttk.Button(actions, text="\u2699 Quick Links", command=self.manage_links).pack(side="left")
 
         self.status_var = tk.StringVar(value="")
         status = ttk.Label(main, textvariable=self.status_var, style="Sub.TLabel")
@@ -1143,23 +1141,6 @@ class Navigator(tk.Frame):
             save_section_cache(self._folder_cache)
         self._clear_content()
         self._render_sections(sections)
-
-    def _jump_to_latest(self):
-        """'Latest Details...' beside Add to Favorites: flip to the
-        Latest Details sub-tab and scroll its rows into view."""
-        if not self.current_job:
-            self.status_var.set("Select a job from the list first, then click Latest Details.")
-            return
-        try:
-            self._sub_nb.select(self._page_latest)
-        except tk.TclError:
-            pass
-        panel = getattr(self, "_latest_panel", None)
-        if panel is not None:
-            try:
-                panel.scroll_top()
-            except (tk.TclError, AttributeError):
-                pass
 
     def _mount_latest_panel(self, page):
         """Latest Details panel filling the Latest page (fixed header +
