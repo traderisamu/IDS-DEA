@@ -365,7 +365,60 @@ LINK_ICON_CHOICES = [
     ("Link", "\uE71B"),
     ("Star", "\uE734"),
     ("Wrench", "\uE924"),
+    ("People", "\uE716"),
+    ("Phone", "\uE723"),
+    ("Share", "\uE72D"),
+    ("Calendar", "\uE787"),
+    ("MapPin", "\uE81C"),
+    ("Database", "\uE80A"),
+    ("Upload", "\uE7E8"),
+    ("Download", "\uE896"),
+    ("Home", "\uE80F"),
+    ("Chart", "\uE825"),
 ]
+
+# Optional per-link accent color, painted onto the glyph (launch buttons
+# get a Pillow-rendered colored image, manager lists get a colored row).
+# None = default monochrome look. Stored as link["color"] in
+# settings.json / admin_links.json; old links without it are unaffected.
+LINK_COLOR_CHOICES = [
+    ("Default", None),
+    ("Orange", "#F57F17"),
+    ("Blue", "#1E88E5"),
+    ("Green", "#43A047"),
+    ("Red", "#E53935"),
+    ("Purple", "#8E24AA"),
+    ("Teal", "#00897B"),
+]
+
+
+_LINK_IMAGE_CACHE = {}
+
+def colored_glyph_image(glyph, color, px=18):
+    """Render an MDL2 glyph in `color` to a PhotoImage (Pillow, system
+    font - exe-safe, no asset file). Cached; Tk images die with their
+    last Python reference, hence the module-level cache. Returns None
+    if Pillow/the font is unavailable - callers fall back to the plain
+    monochrome text glyph."""
+    key = (glyph, color, px)
+    img = _LINK_IMAGE_CACHE.get(key)
+    if img is None:
+        try:
+            from PIL import Image, ImageDraw, ImageFont, ImageTk
+            big = px * 4
+            font = ImageFont.truetype("segmdl2.ttf", big)
+            im = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+            d = ImageDraw.Draw(im)
+            bbox = d.textbbox((0, 0), glyph, font=font)
+            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            d.text(((big - w) / 2 - bbox[0], (big - h) / 2 - bbox[1]),
+                   glyph, font=font, fill=color)
+            im = im.resize((px, px), Image.LANCZOS)
+            img = ImageTk.PhotoImage(im)
+            _LINK_IMAGE_CACHE[key] = img
+        except Exception:
+            return None
+    return img
 
 
 def default_icon_for_type(typ):
@@ -402,26 +455,61 @@ def resolve_link_icon(link):
     return link.get("icon") or default_icon_for_type(link.get("type"))
 
 
-def pick_link_icon(parent):
-    """Modal icon picker. Returns the chosen glyph, or None if cancelled."""
-    result = {"glyph": None}
+def pick_link_icon(parent, current_glyph=None, current_color=None):
+    """Modal glyph + color picker. Returns (glyph, color) on Save (color
+    None = default monochrome), or None if cancelled. Opens preselected
+    on the link's current choices, so saving untouched keeps them."""
+    result = {"glyph": current_glyph, "color": current_color, "saved": False}
     win = tk.Toplevel(parent)
     win.title("Choose Icon")
     win.resizable(False, False)
     win.transient(parent)
     win.grab_set()
+    summary = tk.StringVar()
+    dots = []
+
+    def refresh_summary():
+        gname = next((n for n, g in LINK_ICON_CHOICES if g == result["glyph"]),
+                     "Type default" if not result["glyph"] else "Custom")
+        cname = next((n for n, c in LINK_COLOR_CHOICES if c == result["color"]),
+                     "Custom" if result["color"] else "Default")
+        summary.set("Icon: {}    Color: {}".format(gname, cname))
+
     ttk.Label(win, text="Choose an icon:", font=("Segoe UI", 10, "bold")).pack(
         padx=14, pady=(12, 6))
     grid = ttk.Frame(win)
     grid.pack(padx=14, pady=(0, 6))
     for i, (name, glyph) in enumerate(LINK_ICON_CHOICES):
         ttk.Button(grid, text="{}  {}".format(glyph, name), width=16,
-                   command=lambda g=glyph: (result.update(glyph=g), win.destroy())
-                   ).grid(row=i // 2, column=i % 2, padx=4, pady=4)
-    ttk.Button(win, text="Cancel", command=win.destroy).pack(pady=(0, 12))
+                   command=lambda g=glyph: (result.update(glyph=g), refresh_summary())
+                   ).grid(row=i // 3, column=i % 3, padx=4, pady=4)
+    ttk.Label(win, text="Color:", font=("Segoe UI", 10, "bold")).pack(padx=14, pady=(6, 2))
+    crow = ttk.Frame(win)
+    crow.pack(padx=14, pady=(0, 6))
+    for cname, chex in LINK_COLOR_CHOICES:
+        if chex is None:
+            ttk.Button(crow, text=cname,
+                       command=lambda: (result.update(color=None), refresh_summary())
+                       ).pack(side="left", padx=4)
+        else:
+            dot = orange_dot_image(12, chex)
+            dots.append(dot)
+            ttk.Button(crow, text=cname, image=dot, compound="left",
+                       command=lambda c=chex: (result.update(color=c), refresh_summary())
+                       ).pack(side="left", padx=4)
+    ttk.Label(win, textvariable=summary, font=("Segoe UI", 9),
+              foreground="#68727d").pack(padx=14, pady=(0, 6))
+    brow = ttk.Frame(win)
+    brow.pack(pady=(0, 12))
+    ttk.Button(brow, text="Save",
+               command=lambda: (result.update(saved=True), win.destroy())).pack(side="left")
+    ttk.Button(brow, text="Cancel", command=win.destroy).pack(side="left", padx=(6, 0))
+    refresh_summary()
     win.bind("<Escape>", lambda e: win.destroy())
     parent.wait_window(win)
-    return result["glyph"]
+    if result["saved"]:
+        return result["glyph"], result["color"]
+    return None
 
 
 _ADMIN_LINKS_CACHE = {"links": None, "at": 0.0}
@@ -818,6 +906,7 @@ class Navigator(tk.Frame):
         self._latest_panel = None
         self._links_tree = None
         self._links_notice = ""
+        self._link_images = []
         self.bind_all("<MouseWheel>", self._scroll_content_wheel, add="+")
 
         self._show_placeholder()
@@ -1248,6 +1337,7 @@ class Navigator(tk.Frame):
         """Whole Quick Links tab: launch buttons plus the embedded link
         manager underneath."""
         self._links_tree = None
+        self._link_images = []
         page_quick = self._page_inner["quick"]
         self._render_quick_links(page_quick, width, 0)
         self._render_links_manager(page_quick, 2)
@@ -1283,11 +1373,20 @@ class Navigator(tk.Frame):
         links_frame = ttk.Frame(host, style="App.TFrame")
         links_frame.grid(row=row, column=0, columnspan=3, sticky="ew", padx=2)
         for j, link in enumerate(all_links):
-            ttk.Button(links_frame, text="{}  {}".format(
-                resolve_link_icon(link), link["name"]),
-                style="Card.TButton", width=width,
-                command=lambda x=link["target"]: open_target(x)).grid(
-                    row=j // 3, column=j % 3, sticky="ew", padx=5, pady=5)
+            color = link.get("color")
+            glyph_img = colored_glyph_image(resolve_link_icon(link), color) if color else None
+            if glyph_img is not None:
+                self._link_images.append(glyph_img)
+                ttk.Button(links_frame, text=link["name"], image=glyph_img,
+                           compound="left", style="Card.TButton", width=width,
+                           command=lambda x=link["target"]: open_target(x)).grid(
+                               row=j // 3, column=j % 3, sticky="ew", padx=5, pady=5)
+            else:
+                ttk.Button(links_frame, text="{}  {}".format(
+                    resolve_link_icon(link), link["name"]),
+                    style="Card.TButton", width=width,
+                    command=lambda x=link["target"]: open_target(x)).grid(
+                        row=j // 3, column=j % 3, sticky="ew", padx=5, pady=5)
         links_frame.grid_columnconfigure(0, weight=1, uniform="btn")
         links_frame.grid_columnconfigure(1, weight=1, uniform="btn")
         links_frame.grid_columnconfigure(2, weight=1, uniform="btn")
@@ -1609,12 +1708,21 @@ class Navigator(tk.Frame):
         def reload_tree():
             for x in tree.get_children():
                 tree.delete(x)
+            used_colors = set()
             for idx, link in enumerate(all_links()):
                 admin = idx < len(get_admin_links())
                 shown = "{} {}".format(resolve_link_icon(link), link["name"])
+                color = link.get("color")
+                tags = ()
+                if color:
+                    tags = ("linkcolor_" + str(color),)
+                    used_colors.add(str(color))
                 tree.insert("", "end", iid=str(idx),
                             values=("Admin" if admin else link["type"], link["target"]),
-                            text=("{} (Admin)".format(shown) if admin else shown))
+                            text=("{} (Admin)".format(shown) if admin else shown),
+                            tags=tags)
+            for color in used_colors:
+                tree.tag_configure("linkcolor_" + color, foreground=color)
 
         def add_link():
             name = simpledialog.askstring(APP_NAME, "Link name:", parent=top)
@@ -1683,10 +1791,13 @@ class Navigator(tk.Frame):
                     APP_NAME, "Admin links are fixed here \u2014 change icons via Admin Links....", parent=top)
                 return
             link = self.settings["links"][idx - len(get_admin_links())]
-            glyph = pick_link_icon(top)
-            if not glyph:
+            picked = pick_link_icon(top, link.get("icon"), link.get("color"))
+            if not picked:
                 return
-            link["icon"] = glyph
+            glyph, color = picked
+            if glyph:
+                link["icon"] = glyph
+            link["color"] = color
             save_settings(self.settings)
             self._refresh_quick_links(select=idx)
 
@@ -1786,9 +1897,18 @@ class Navigator(tk.Frame):
         def reload_tree():
             for x in tree.get_children():
                 tree.delete(x)
+            used_colors = set()
             for i, l in enumerate(links):
                 shown = "{} {}".format(resolve_link_icon(l), l["name"])
-                tree.insert("", "end", iid=str(i), values=(l["type"], l["target"]), text=shown)
+                color = l.get("color")
+                tags = ()
+                if color:
+                    tags = ("linkcolor_" + str(color),)
+                    used_colors.add(str(color))
+                tree.insert("", "end", iid=str(i), values=(l["type"], l["target"]),
+                            text=shown, tags=tags)
+            for color in used_colors:
+                tree.tag_configure("linkcolor_" + color, foreground=color)
 
         def add():
             name = simpledialog.askstring(APP_NAME, "Admin link name:", parent=win)
@@ -1826,10 +1946,13 @@ class Navigator(tk.Frame):
             if not sel:
                 return
             i = int(sel[0])
-            glyph = pick_link_icon(win)
-            if not glyph:
+            picked = pick_link_icon(win, links[i].get("icon"), links[i].get("color"))
+            if not picked:
                 return
-            links[i]["icon"] = glyph
+            glyph, color = picked
+            if glyph:
+                links[i]["icon"] = glyph
+            links[i]["color"] = color
             reload_tree()
             tree.selection_set(str(i))
             tree.see(str(i))
