@@ -709,7 +709,7 @@ class Navigator(tk.Frame):
         actions.grid(row=1, column=0, sticky="ew", pady=(10, 4))
         ttk.Button(actions, text="Open Job", command=self.open_current_job).pack(side="left")
         ttk.Button(actions, text="Add to Favorites", command=self.add_favorite).pack(side="left", padx=6)
-        ttk.Button(actions, text="\u2699 Quick Links", command=self.manage_links).pack(side="left")
+        ttk.Button(actions, text="\u2699 Quick Links", command=self._jump_to_quick).pack(side="left")
 
         self.status_var = tk.StringVar(value="")
         status = ttk.Label(main, textvariable=self.status_var, style="Sub.TLabel")
@@ -769,6 +769,8 @@ class Navigator(tk.Frame):
             if _pname == "latest":
                 self._page_latest = _pg
                 continue
+            if _pname == "quick":
+                self._page_quick = _pg
             _pg.grid_columnconfigure(0, weight=1)
             _pg.grid_rowconfigure(0, weight=1)
             _cv = tk.Canvas(_pg, background="#f5f6f8", highlightthickness=0)
@@ -787,6 +789,8 @@ class Navigator(tk.Frame):
             self._page_inner[_pname] = _inner
             self._scroll_map[_inner] = _cv
         self._latest_panel = None
+        self._links_tree = None
+        self._links_notice = ""
         self.bind_all("<MouseWheel>", self._scroll_content_wheel, add="+")
 
         self._show_placeholder()
@@ -962,7 +966,7 @@ class Navigator(tk.Frame):
         # (the panel guides job selection).
         all_links = get_admin_links() + self.settings.get("links", [])
         width = max([len(l["name"]) + 3 for l in all_links] + [1]) + 2
-        self._render_quick_links(page_quick, width, 0)
+        self._render_quick_page(width)
         self._mount_latest_panel(page_latest)
 
     # ---------- main content ----------
@@ -1179,7 +1183,6 @@ class Navigator(tk.Frame):
         row = 0
         page_folders = self._page_inner["folders"]
         page_latest = self._page_frames["latest"]
-        page_quick = self._page_inner["quick"]
         # Stage groups keep their collapsible arrow-toggle, but the toggle
         # shows ONLY the arrow - no title text. Only QUICK LINKS keeps a
         # titled header (see _render_quick_links). Each group still gets
@@ -1203,8 +1206,43 @@ class Navigator(tk.Frame):
             row += 1
 
         all_links = get_admin_links() + self.settings.get("links", [])
-        self._render_quick_links(page_quick, width, 0)
+        self._render_quick_page(width)
         self._mount_latest_panel(page_latest)
+
+    def _jump_to_quick(self):
+        """'Quick Links' beside Add to Favorites: flip to the Quick Links
+        sub-tab - launch buttons on top, the link manager below."""
+        try:
+            self._sub_nb.select(self._page_quick)
+        except (tk.TclError, AttributeError):
+            pass
+
+    def _render_quick_page(self, width):
+        """Whole Quick Links tab: launch buttons plus the embedded link
+        manager underneath."""
+        self._links_tree = None
+        page_quick = self._page_inner["quick"]
+        self._render_quick_links(page_quick, width, 0)
+        self._render_links_manager(page_quick, 2)
+
+    def _refresh_quick_links(self, select=None):
+        """Repaint only the Quick Links tab after a manager edit - the Job
+        Folders and Latest pages keep their state, and `select` (a tree
+        iid) restores the edited row's selection in the rebuilt list."""
+        page_quick = self._page_inner["quick"]
+        for w in page_quick.winfo_children():
+            w.destroy()
+        all_links = get_admin_links() + self.settings.get("links", [])
+        width = max([len(l["name"]) + 3 for l in all_links] + [1]) + 2
+        self._render_quick_page(width)
+        if select is not None and self._links_tree is not None:
+            try:
+                iid = str(select)
+                if iid in self._links_tree.get_children():
+                    self._links_tree.selection_set(iid)
+                    self._links_tree.see(iid)
+            except tk.TclError:
+                pass
 
     def _render_quick_links(self, host, width, row):
         """Quick-links card block with its own collapse toggle. Shown under a
@@ -1441,20 +1479,26 @@ class Navigator(tk.Frame):
             "Added '{}' to Favorites (shown in the sidebar).".format(self.current_job),
             parent=self.winfo_toplevel())
 
-    def manage_links(self):
-        win = tk.Toplevel(self)
-        win.title("NaviTool 2.0 - Quick Links")
-        win.geometry("700x470")
-        win.minsize(620, 400)
-        win.transient(self.winfo_toplevel())
-        win.grab_set()
+    def _render_links_manager(self, host, row):
+        """The link manager embedded at the bottom of the Quick Links tab
+        (add/rename/delete/reorder/icons/admin links) - no popup. Every
+        edit repaints only this tab (see _refresh_quick_links) so the
+        edited row stays selected."""
+        top = self.winfo_toplevel()
+        toggle = tk.Label(host, text="\u25BE  \u2699 MANAGE LINKS",
+                          font=("Segoe UI", 9, "bold"),
+                          bg="#f5f6f8", fg="#20252b", cursor="hand2")
+        toggle.grid(row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(14, 0))
+        body = ttk.Frame(host, style="App.TFrame")
+        body.grid(row=row + 1, column=0, columnspan=3, sticky="ew", padx=2)
+        body.grid_columnconfigure(0, weight=1)
 
-        tree_frame = ttk.Frame(win)
-        tree_frame.pack(fill="both", expand=True, padx=12, pady=(12, 4))
+        tree_frame = ttk.Frame(body)
+        tree_frame.grid(row=0, column=0, sticky="ew", pady=(4, 0))
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
         tree = ttk.Treeview(tree_frame, columns=("type", "target"), show="tree headings",
-                               style="Nav.Treeview")
+                            style="Nav.Treeview", height=8)
         tree.heading("#0", text="Name")
         tree.heading("type", text="Type")
         tree.heading("target", text="Target")
@@ -1463,14 +1507,16 @@ class Navigator(tk.Frame):
         tree_vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
         tree_hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=tree_vsb.set, xscrollcommand=tree_hsb.set)
-        tree.grid(row=0, column=0, sticky="nsew")
+        tree.grid(row=0, column=0, sticky="ew")
         tree_vsb.grid(row=0, column=1, sticky="ns")
         tree_hsb.grid(row=1, column=0, sticky="ew")
         tree.bind("<Double-Button-1>", lambda e: rename_link())
+        self._links_tree = tree
 
-        hint = tk.StringVar(value="")
-        ttk.Label(win, textvariable=hint, foreground="#68727d",
-                  font=("Segoe UI", 9)).pack(anchor="w", padx=12)
+        hint = tk.StringVar(value=self._links_notice)
+        self._links_notice = ""
+        ttk.Label(body, textvariable=hint, foreground="#68727d",
+                  font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w")
 
         def all_links():
             return get_admin_links() + self.settings.get("links", [])
@@ -1486,17 +1532,16 @@ class Navigator(tk.Frame):
                             text=("{} (Admin)".format(shown) if admin else shown))
 
         def add_link():
-            name = simpledialog.askstring(APP_NAME, "Link name:", parent=win)
+            name = simpledialog.askstring(APP_NAME, "Link name:", parent=top)
             if not name:
                 return
-            target = simpledialog.askstring(APP_NAME, "URL or path:", parent=win)
+            target = simpledialog.askstring(APP_NAME, "URL or path:", parent=top)
             if not target:
                 return
             self.settings.setdefault("links", []).append(
                 {"name": name, "type": detect_link_type(target), "target": target})
             save_settings(self.settings)
-            reload_tree()
-            self._show_job()
+            self._refresh_quick_links(select=len(all_links()) - 1)
 
         def delete_link():
             sel = tree.selection()
@@ -1505,12 +1550,11 @@ class Navigator(tk.Frame):
             idx = int(sel[0])
             if idx < len(get_admin_links()):
                 messagebox.showwarning(
-                    APP_NAME, "Admin links are fixed and cannot be deleted.", parent=win)
+                    APP_NAME, "Admin links are fixed and cannot be deleted.", parent=top)
                 return
             del self.settings["links"][idx - len(get_admin_links())]
             save_settings(self.settings)
-            reload_tree()
-            self._show_job()
+            self._refresh_quick_links(select=min(idx, len(all_links()) - 1))
 
         def rename_link(_=None):
             sel = tree.selection()
@@ -1519,19 +1563,16 @@ class Navigator(tk.Frame):
             idx = int(sel[0])
             if idx < len(get_admin_links()):
                 messagebox.showwarning(
-                    APP_NAME, "Admin links are fixed here \u2014 rename them via Admin Links....", parent=win)
+                    APP_NAME, "Admin links are fixed here \u2014 rename them via Admin Links....", parent=top)
                 return
             link = self.settings["links"][idx - len(get_admin_links())]
             name = simpledialog.askstring(APP_NAME, "Link name:",
-                                          initialvalue=link["name"], parent=win)
+                                          initialvalue=link["name"], parent=top)
             if not name:
                 return
             link["name"] = name.strip()
             save_settings(self.settings)
-            reload_tree()
-            tree.selection_set(str(idx))
-            tree.see(str(idx))
-            self._show_job()
+            self._refresh_quick_links(select=idx)
 
         def set_link_icon(_=None):
             sel = tree.selection()
@@ -1540,18 +1581,15 @@ class Navigator(tk.Frame):
             idx = int(sel[0])
             if idx < len(get_admin_links()):
                 messagebox.showwarning(
-                    APP_NAME, "Admin links are fixed here \u2014 change icons via Admin Links....", parent=win)
+                    APP_NAME, "Admin links are fixed here \u2014 change icons via Admin Links....", parent=top)
                 return
             link = self.settings["links"][idx - len(get_admin_links())]
-            glyph = pick_link_icon(win)
+            glyph = pick_link_icon(top)
             if not glyph:
                 return
             link["icon"] = glyph
             save_settings(self.settings)
-            reload_tree()
-            tree.selection_set(str(idx))
-            tree.see(str(idx))
-            self._show_job()
+            self._refresh_quick_links(select=idx)
 
         def move_link(step):
             sel = tree.selection()
@@ -1568,10 +1606,7 @@ class Navigator(tk.Frame):
                 return
             user_links[pos], user_links[new_pos] = user_links[new_pos], user_links[pos]
             save_settings(self.settings)
-            reload_tree()
-            tree.selection_set(str(idx + step))
-            tree.see(str(idx + step))
-            self._show_job()
+            self._refresh_quick_links(select=idx + step)
 
         def add_dropped_links(data):
             added = 0
@@ -1585,30 +1620,35 @@ class Navigator(tk.Frame):
                 added += 1
             if added:
                 save_settings(self.settings)
-                reload_tree()
-                self._show_job()
-                hint.set("Added {} link(s) \u2014 UNC path generated automatically.".format(added))
+                self._links_notice = "Added {} link(s) \u2014 UNC path generated automatically.".format(added)
+                self._refresh_quick_links(select=len(all_links()) - 1)
 
         if HAS_DND:
             try:
-                win.drop_target_register(DND_FILES)
-                win.dnd_bind("<<Drop>>", lambda e: add_dropped_links(e.data))
-                hint.set("Drag files or folders here from Explorer \u2014 UNC path is generated for you.")
+                tree.drop_target_register(DND_FILES)
+                tree.dnd_bind("<<Drop>>", lambda e: add_dropped_links(e.data))
+                if not hint.get():
+                    hint.set("Drag files or folders onto the list \u2014 UNC path is generated for you.")
             except Exception:
                 pass
 
-        buttons = ttk.Frame(win)
-        buttons.pack(fill="x", padx=12, pady=(0, 2))
+        buttons = ttk.Frame(body)
+        buttons.grid(row=2, column=0, sticky="w", pady=(4, 0))
         ttk.Button(buttons, text="+ Add Link", command=add_link).pack(side="left")
         ttk.Button(buttons, text="Rename", command=rename_link).pack(side="left", padx=6)
         ttk.Button(buttons, text="Delete", command=delete_link).pack(side="left")
         ttk.Button(buttons, text="\u25B2 Up", command=lambda: move_link(-1)).pack(side="left")
         ttk.Button(buttons, text="\u25BC Down", command=lambda: move_link(1)).pack(side="left", padx=6)
         ttk.Button(buttons, text="Icon...", command=set_link_icon).pack(side="left")
-        buttons2 = ttk.Frame(win)
-        buttons2.pack(fill="x", padx=12, pady=(0, 12))
-        ttk.Button(buttons2, text="Admin Links...", command=lambda: self._edit_admin_links(win)).pack(side="left")
-        ttk.Button(buttons2, text="Close", command=win.destroy).pack(side="right")
+        buttons2 = ttk.Frame(body)
+        buttons2.grid(row=3, column=0, sticky="w", pady=(4, 0))
+        ttk.Button(buttons2, text="Admin Links...",
+                   command=lambda: self._edit_admin_links(top)).pack(side="left")
+        toggle.bind("<Button-1>", lambda e, h=toggle, f=body:
+                    self._toggle_section("MANAGE LINKS", h, f, "\u2699 MANAGE LINKS"))
+        if "MANAGE LINKS" in self._collapsed:
+            body.grid_remove()
+            toggle.configure(text="\u25B8  \u2699 MANAGE LINKS")
         reload_tree()
 
     def _edit_admin_links(self, parent=None):
@@ -1736,7 +1776,7 @@ class Navigator(tk.Frame):
                 "Admin links saved to the shared config:\n{}\n\nAll installs share this file.".format(path),
                 parent=win)
             win.destroy()
-            self._show_job()
+            self._refresh_quick_links()
 
         hint = tk.StringVar(value="")
 
