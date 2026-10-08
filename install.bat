@@ -1,9 +1,10 @@
 @echo off
 REM ============================================================
 REM  IDS PH - DEA Logger (+ embedded NaviTool 2.0) - INSTALL (per PC)
-REM  Run this from the PROJECT FOLDER (the same one build.bat
-REM  is in) - it reads the exe straight out of the dist\ subfolder,
-REM  no need to copy this script into dist first.
+REM  Run this from the rollout package - either the dist\ folder
+REM  build.bat assembles (exe + this script + config seed together)
+REM  or the project folder (it reads the exe out of the dist\
+REM  subfolder there). Both layouts work; nothing needs moving.
 REM
 REM  IMPORTANT: run this from a Command Prompt window (not just by
 REM  double-clicking) the first time, so you can read the OK/WARNING
@@ -13,10 +14,10 @@ REM ============================================================
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-REM Looks in dist\ first (the normal case: this script stays in the
-REM project folder next to build.bat). Falls back to this same
-REM folder in case someone instead handed out a lean package with just
-REM the exe + this script copied in together - either layout works.
+REM Looks in dist\ first (the normal case when run from the project
+REM folder next to build.bat). Falls back to this same folder (the
+REM normal case when run from the dist\ rollout package build.bat
+REM assembles) - either layout works.
 if exist "%~dp0dist\IDS_DEA_Logger.exe" (
     set "SRC_EXE=%~dp0dist\IDS_DEA_Logger.exe"
 ) else (

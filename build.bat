@@ -4,7 +4,10 @@ REM  IDS PH - DEA Logger (+ embedded NaviTool 2.0) - BUILD
 REM  Standard build: venv + requirements + PyInstaller, built via
 REM  %TEMP% (never in-place, so cloud-sync locks can't corrupt it),
 REM  then the finished exe is copied to dist\ and launched so you
-REM  can debug/test immediately.
+REM  can debug/test immediately. dist\ also collects every rollout
+REM  file (install/uninstall scripts, version tag, config seed,
+REM  offline admin-links fallback) so the whole folder is the
+REM  copy-paste handout package for the shared drive.
 REM ============================================================
 
 setlocal EnableExtensions
@@ -126,11 +129,23 @@ REM shared drive at rollout time.
 if exist "dist\version.txt" (
     echo       OK - release tag written to dist\version.txt
 )
+REM Stage the full rollout handout into dist\ so it can be copied to
+REM the shared drive as-is (install.bat already resolves the exe,
+REM config seed, and admin-links fallback from its own folder when no
+REM dist\ subfolder sits next to it). The config seed is first-install
+REM only - install.bat never overwrites a live shared config.
+copy /Y "%~dp0install.bat" "dist\install.bat" >nul
+copy /Y "%~dp0uninstall.bat" "dist\uninstall.bat" >nul
+if exist "%~dp0admin_links.json" copy /Y "%~dp0admin_links.json" "dist\admin_links.json" >nul
+if exist "%~dp0DEA_Config.xlsx" copy /Y "%~dp0DEA_Config.xlsx" "dist\DEA_Config.xlsx" >nul
+echo       OK - dist\ now holds the full handout: exe + version.txt +
+echo       install.bat + uninstall.bat + DEA_Config.xlsx + admin_links.json
 
 echo.
 echo ============================================================
-echo  BUILD COMPLETE: dist\%EXE_NAME%
-echo  Launching it now for debug/test...
+echo  BUILD COMPLETE: dist\ is the rollout package (copy it whole
+echo  to the shared drive; installed apps self-update from it).
+echo  Launching the fresh exe now for debug/test...
 echo ============================================================
 start "" "%~dp0dist\%EXE_NAME%"
 endlocal

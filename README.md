@@ -71,10 +71,12 @@ for this step rather than a few seconds.
 
 ### Rollout notes (handing a build to the team)
 
-The shared handout folder (e.g. `...\Engg Software\DEA`) needs only:
-`install.bat` + `IDS_DEA_Logger.exe` (flat, or inside `dist\`) +
-`uninstall.bat` + `version.txt`. Optional: `admin_links.json` (offline
-fallback) and `DEA_Config.xlsx` (first-install seed only).
+The shared handout folder (e.g. `...\Engg Software\DEA`) needs only
+the contents of `dist\` copied over whole: `IDS_DEA_Logger.exe` +
+`version.txt` + `install.bat` + `uninstall.bat` + `DEA_Config.xlsx`
+(first-install seed only) + `admin_links.json` (offline fallback).
+`build.bat` stages all of these into `dist\` on every build, so there
+is nothing left to gather by hand.
 
 `version.txt` is what drives the app's silent auto-update: every launch
 compares it against the running build and, when the staged one is newer,
