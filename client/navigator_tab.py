@@ -86,36 +86,45 @@ def _cascade_or_open(base, rel, label=None):
     return rel
 
 
-# A dropdown with more destinations than this renders as a filterable
-# Combobox (every destination flattened with breadcrumb labels) instead
-# of a screen-taller native menu. Short dropdowns stay native menus.
-COMBO_FLATTEN_THRESHOLD = 25
+# A cascade level holding more than this many entries gets split into
+# balanced "first - last" sub-cascades, so no native menu grows taller
+# than the screen. Short levels render exactly as before.
+MENU_CHUNK_SIZE = 25
 
 
-def _flatten_menu_destinations(entries, trail=()):
-    """Walk nested [(label, rel-or-children), ...] menu entries depth-first
-    and collect every clickable destination as (breadcrumb, rel):
-    "SKETCHES > XX-01 > 031226". Head pins and leaf commands both count
-    (intermediate cascade headers were never clickable themselves, so
-    nothing reachable is lost); separators are skipped; duplicate folder
-    names stay distinct via their breadcrumbs."""
+def _chunk_menu_entries(entries):
+    """Split long runs of non-separator entries into balanced sub-cascades
+    ("CD-001 - CD-020", ...). Leaves and sub-cascades chunk together (CD
+    folders and CALCS connections mix both); separators, head pins, and
+    short levels pass through untouched, in original order. Applied per
+    level by _fill_menu, so every depth chunks independently."""
     out = []
+    run = []
+
+    def _flush():
+        if len(run) > MENU_CHUNK_SIZE:
+            n = -(-len(run) // MENU_CHUNK_SIZE)  # ceil: balanced, no tiny tail
+            size, extra = divmod(len(run), n)
+            idx = 0
+            for c in range(n):
+                take = size + (1 if c < extra else 0)
+                part = run[idx:idx + take]
+                idx += take
+                first = str(part[0][0])[:24]
+                last = str(part[-1][0])[:24]
+                out.append(("{} - {}".format(first, last), list(part)))
+        else:
+            out.extend(run)
+        del run[:]
+
     for entry in entries or []:
         if not entry or entry[0] == "-":
-            continue
-        label, target = entry[0], entry[1] if len(entry) > 1 else None
-        if not str(label).strip():
-            continue  # invisible in a menu; unusable as a combo value
-        # A cascade's own-folder pin repeats its header label ("CD-03 >
-        # CD-03"); collapse the repeat so values read cleanly.
-        crumb = tuple(list(trail) + [str(label)])
-        if len(crumb) >= 2 and crumb[-1] == crumb[-2]:
-            crumb = crumb[:-1]
-        if isinstance(target, str):
-            if target:
-                out.append((" > ".join(crumb), target))
-        elif isinstance(target, list):
-            out.extend(_flatten_menu_destinations(target, crumb))
+            _flush()
+            if entry:
+                out.append(entry)
+        else:
+            run.append(entry)
+    _flush()
     return out
 
 
@@ -1433,8 +1442,9 @@ class Navigator(tk.Frame):
     def _fill_menu(self, menu, entries):
         """Populate a tk.Menu from nested [(label, rel-or-children), ...]
         entries to any depth: "-" is a separator, a bare rel string is an
-        open-folder command, a list is a further cascade."""
-        for entry in entries or []:
+        open-folder command, a list is a further cascade. Overlong levels
+        arrive pre-chunked into "first - last" sub-cascades."""
+        for entry in _chunk_menu_entries(entries):
             if entry[0] == "-":
                 menu.add_separator()
             elif isinstance(entry[1], str):
@@ -1445,47 +1455,11 @@ class Navigator(tk.Frame):
                 self._fill_menu(sub, entry[1])
                 menu.add_cascade(label=entry[0], menu=sub)
 
-    def _render_combo(self, frame, label, dests, width, r, col):
-        """A long dropdown rendered as a filterable Combobox of its
-        flattened destinations. Editable, so typing narrows the popdown;
-        picking opens the folder and resets to the placeholder."""
-        placeholder = "Select {}...".format(label)
-        var = tk.StringVar(value=placeholder)
-        by_label = {}
-        values = []
-        for crumb, rel in dests:
-            if crumb not in by_label:
-                by_label[crumb] = rel
-                values.append(crumb)
-        combo = ttk.Combobox(frame, textvariable=var, values=values, width=width)
-        combo.grid(row=r, column=col, sticky="ew", padx=5, pady=5)
-
-        def _picked(_e=None):
-            rel = by_label.get(var.get())
-            var.set(placeholder)
-            try:
-                combo.selection_clear()
-            except tk.TclError:
-                pass
-            if rel is not None:
-                self.open_job_folder(rel)
-
-        def _blurred(_e=None):
-            if var.get() not in by_label:
-                var.set(placeholder)
-
-        combo.bind("<<ComboboxSelected>>", _picked)
-        combo.bind("<FocusOut>", _blurred)
-
     def _render_items(self, frame, items, width):
         for i, it in enumerate(items):
             col = i % 3
             r = i // 3
             if it["kind"] == "dropdown":
-                dests = _flatten_menu_destinations(it.get("menu") or [])
-                if len(dests) > COMBO_FLATTEN_THRESHOLD:
-                    self._render_combo(frame, it["label"], dests, width, r, col)
-                    continue
                 mb = ttk.Menubutton(frame, text="\u25BE " + it["label"],
                                     style="Card.TMenubutton", width=width)
                 menu = tk.Menu(mb, tearoff=0)
