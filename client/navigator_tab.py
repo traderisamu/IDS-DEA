@@ -86,6 +86,39 @@ def _cascade_or_open(base, rel, label=None):
     return rel
 
 
+# A dropdown with more destinations than this renders as a filterable
+# Combobox (every destination flattened with breadcrumb labels) instead
+# of a screen-taller native menu. Short dropdowns stay native menus.
+COMBO_FLATTEN_THRESHOLD = 25
+
+
+def _flatten_menu_destinations(entries, trail=()):
+    """Walk nested [(label, rel-or-children), ...] menu entries depth-first
+    and collect every clickable destination as (breadcrumb, rel):
+    "SKETCHES > XX-01 > 031226". Head pins and leaf commands both count
+    (intermediate cascade headers were never clickable themselves, so
+    nothing reachable is lost); separators are skipped; duplicate folder
+    names stay distinct via their breadcrumbs."""
+    out = []
+    for entry in entries or []:
+        if not entry or entry[0] == "-":
+            continue
+        label, target = entry[0], entry[1] if len(entry) > 1 else None
+        if not str(label).strip():
+            continue  # invisible in a menu; unusable as a combo value
+        # A cascade's own-folder pin repeats its header label ("CD-03 >
+        # CD-03"); collapse the repeat so values read cleanly.
+        crumb = tuple(list(trail) + [str(label)])
+        if len(crumb) >= 2 and crumb[-1] == crumb[-2]:
+            crumb = crumb[:-1]
+        if isinstance(target, str):
+            if target:
+                out.append((" > ".join(crumb), target))
+        elif isinstance(target, list):
+            out.extend(_flatten_menu_destinations(target, crumb))
+    return out
+
+
 def build_job_sections(job_name, progress=None, cancel=None):
     """Return [(title, [item, ...]), ...]. An item is either
     {"kind":"button", label, rel, icon} or
@@ -1412,11 +1445,47 @@ class Navigator(tk.Frame):
                 self._fill_menu(sub, entry[1])
                 menu.add_cascade(label=entry[0], menu=sub)
 
+    def _render_combo(self, frame, label, dests, width, r, col):
+        """A long dropdown rendered as a filterable Combobox of its
+        flattened destinations. Editable, so typing narrows the popdown;
+        picking opens the folder and resets to the placeholder."""
+        placeholder = "Select {}...".format(label)
+        var = tk.StringVar(value=placeholder)
+        by_label = {}
+        values = []
+        for crumb, rel in dests:
+            if crumb not in by_label:
+                by_label[crumb] = rel
+                values.append(crumb)
+        combo = ttk.Combobox(frame, textvariable=var, values=values, width=width)
+        combo.grid(row=r, column=col, sticky="ew", padx=5, pady=5)
+
+        def _picked(_e=None):
+            rel = by_label.get(var.get())
+            var.set(placeholder)
+            try:
+                combo.selection_clear()
+            except tk.TclError:
+                pass
+            if rel is not None:
+                self.open_job_folder(rel)
+
+        def _blurred(_e=None):
+            if var.get() not in by_label:
+                var.set(placeholder)
+
+        combo.bind("<<ComboboxSelected>>", _picked)
+        combo.bind("<FocusOut>", _blurred)
+
     def _render_items(self, frame, items, width):
         for i, it in enumerate(items):
             col = i % 3
             r = i // 3
             if it["kind"] == "dropdown":
+                dests = _flatten_menu_destinations(it.get("menu") or [])
+                if len(dests) > COMBO_FLATTEN_THRESHOLD:
+                    self._render_combo(frame, it["label"], dests, width, r, col)
+                    continue
                 mb = ttk.Menubutton(frame, text="\u25BE " + it["label"],
                                     style="Card.TMenubutton", width=width)
                 menu = tk.Menu(mb, tearoff=0)

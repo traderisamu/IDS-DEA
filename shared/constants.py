@@ -9,7 +9,7 @@ APP_TITLE = "IDS PH - Daily Employee Accomplishment (DEA) Logger"
 # is manually rebuilt and redistributed rather than auto-updating, this
 # is the only way to tell at a glance (main window title bar + Admin
 # Dashboard) which PCs are still running an old build if a fix goes out.
-APP_VERSION = "2.6.11"
+APP_VERSION = "2.6.12"
 
 # Default network location of the config file + Logs folder.
 # Can be overridden per-machine via the local settings file
