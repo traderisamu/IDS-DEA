@@ -73,10 +73,13 @@ for this step rather than a few seconds.
 
 The shared handout folder (e.g. `...\Engg Software\DEA`) needs only
 the contents of `dist\` copied over whole: `IDS_DEA_Logger.exe` +
-`version.txt` + `install.bat` + `uninstall.bat` + `DEA_Config.xlsx`
-(first-install seed only) + `admin_links.json` (offline fallback).
-`build.bat` stages all of these into `dist\` on every build, so there
-is nothing left to gather by hand.
+`version.txt` + `install.bat` + `uninstall.bat`. `build.bat` stages
+exactly these four into `dist\` on every build, so there is nothing
+left to gather by hand. Never copy a `DEA_Config.xlsx` or
+`admin_links.json` into the live folder - the team's live copies there
+are authoritative. (On a brand-new shared folder with no config yet,
+copy the repo's `DEA_Config.xlsx` there once by hand, or run
+`install.bat` from the project folder where the seed sits next to it.)
 
 `version.txt` is what drives the app's silent auto-update: every launch
 compares it against the running build and, when the staged one is newer,

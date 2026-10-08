@@ -136,10 +136,13 @@ REM dist\ subfolder sits next to it). The config seed is first-install
 REM only - install.bat never overwrites a live shared config.
 copy /Y "%~dp0install.bat" "dist\install.bat" >nul
 copy /Y "%~dp0uninstall.bat" "dist\uninstall.bat" >nul
-if exist "%~dp0admin_links.json" copy /Y "%~dp0admin_links.json" "dist\admin_links.json" >nul
-if exist "%~dp0DEA_Config.xlsx" copy /Y "%~dp0DEA_Config.xlsx" "dist\DEA_Config.xlsx" >nul
-echo       OK - dist\ now holds the full handout: exe + version.txt +
-echo       install.bat + uninstall.bat + DEA_Config.xlsx + admin_links.json
+REM The live shared folder is authoritative for the config and admin
+REM links, so they are NEVER staged here - and any copies a previous
+REM build left behind are removed so they can't be pasted over it.
+if exist "dist\DEA_Config.xlsx" del "dist\DEA_Config.xlsx" >nul 2>&1
+if exist "dist\admin_links.json" del "dist\admin_links.json" >nul 2>&1
+echo       OK - dist\ now holds the safe handout only: exe + version.txt +
+echo       install.bat + uninstall.bat (never the live config/admin links)
 
 echo.
 echo ============================================================

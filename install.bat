@@ -61,15 +61,22 @@ if not exist "%SRC_EXE%" (
 
 echo.
 echo [1/4] Installing to: %INSTALL_DIR%
+echo       A running copy must close first - Windows locks a running
+echo       exe so overwriting it would fail, and launching afterwards
+echo       would leave two copies running at once.
+echo       ^(If the app is open with unsent entries, save them first.^)
+set /p CLOSEAPP="Close the running DEA Logger (if any) and continue? (Y/N): "
+if /i not "%CLOSEAPP%"=="Y" exit /b 0
+taskkill /IM IDS_DEA_Logger.exe /F >nul 2>&1
+timeout /t 2 /nobreak >nul 2>&1
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 copy /Y "%SRC_EXE%" "%TARGET_EXE%" >nul
-if exist "%TARGET_EXE%" (
-    echo       OK - exe copied from: %SRC_EXE%
-) else (
+if errorlevel 1 (
     echo       FAILED to copy exe. Check permissions on %INSTALL_DIR% and try again.
     pause
     exit /b 1
 )
+echo       OK - exe copied from: %SRC_EXE%
 REM Offline fallback for the NaviTool 2.0 tab's quick links (used only
 REM when the shared drive is unreachable - otherwise the shared copy wins).
 if exist "%~dp0admin_links.json" (
