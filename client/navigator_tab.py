@@ -87,14 +87,31 @@ def _cascade_or_open(base, rel, label=None):
 
 
 # A cascade level holding more than this many entries gets split into
-# balanced "first - last" sub-cascades, so no native menu grows taller
+# balanced "first to last" sub-cascades, so no native menu grows taller
 # than the screen. Short levels render exactly as before.
 MENU_CHUNK_SIZE = 25
 
 
+def _chunk_range_label(first, last):
+    """Compact "CD#1 to CD#60" / "MC01 to MC35" / "031226 to 033126"
+    chunk label from the chunk's real first/last entry names: same
+    leading text plus a trailing number on both sides collapses to
+    first-full-name + last-number (number strings kept verbatim, so
+    zero-padding and "#" styles survive). Anything else (descriptions,
+    mixed prefixes) falls back to the full "first to last" form,
+    truncated so one long folder name can't blow out menu width."""
+    first, last = str(first or "").strip(), str(last or "").strip()
+    m1 = re.match(r"^(.*?)(\d+)$", first)
+    m2 = re.match(r"^(.*?)(\d+)$", last)
+    if m1 and m2 and m1.group(1) == m2.group(1) and m1.group(2) != m2.group(2):
+        return "{} to {}{}".format(first[:28], m1.group(1), m2.group(2))[:60]
+    label = "{} to {}".format(first, last)
+    return label if len(label) <= 60 else label[:57] + "..."
+
+
 def _chunk_menu_entries(entries):
     """Split long runs of non-separator entries into balanced sub-cascades
-    ("CD-001 - CD-020", ...). Leaves and sub-cascades chunk together (CD
+    ("CD#1 to CD#60", ...). Leaves and sub-cascades chunk together (CD
     folders and CALCS connections mix both); separators, head pins, and
     short levels pass through untouched, in original order. Applied per
     level by _fill_menu, so every depth chunks independently."""
@@ -110,9 +127,8 @@ def _chunk_menu_entries(entries):
                 take = size + (1 if c < extra else 0)
                 part = run[idx:idx + take]
                 idx += take
-                first = str(part[0][0])[:28]
-                last = str(part[-1][0])[:28]
-                out.append(("{} to {}".format(first, last), list(part)))
+                out.append((_chunk_range_label(part[0][0], part[-1][0]),
+                            list(part)))
         else:
             out.extend(run)
         del run[:]
