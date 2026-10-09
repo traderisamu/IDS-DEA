@@ -93,18 +93,25 @@ MENU_CHUNK_SIZE = 25
 
 
 def _chunk_range_label(first, last):
-    """Compact "CD#1 to CD#60" / "MC01 to MC35" / "031226 to 033126"
-    chunk label from the chunk's real first/last entry names: same
-    leading text plus a trailing number on both sides collapses to
-    first-full-name + last-number (number strings kept verbatim, so
-    zero-padding and "#" styles survive). Anything else (descriptions,
-    mixed prefixes) falls back to the full "first to last" form,
+    """Compact "CD#001 to CD#025" / "MC01 to MC35" / "031226 to 033126"
+    chunk label from the chunk's real first/last entry names. Two rules,
+    in order: (1) same leading text plus a trailing number on both sides
+    collapses to first-full-name + last-number (number strings kept
+    verbatim, so zero-padding and "#" styles survive); (2) same embedded
+    PREFIX#/-digits code with different numbers (the CD number buried in
+    "262601 FBD CD#001 (Sequence Map...)") collapses to "CD#001 to
+    CD#025". Single-letter codes (W21) and digit-free names can never
+    match. Anything else falls back to the full "first to last" form,
     truncated so one long folder name can't blow out menu width."""
     first, last = str(first or "").strip(), str(last or "").strip()
     m1 = re.match(r"^(.*?)(\d+)$", first)
     m2 = re.match(r"^(.*?)(\d+)$", last)
     if m1 and m2 and m1.group(1) == m2.group(1) and m1.group(2) != m2.group(2):
         return "{} to {}{}".format(first[:28], m1.group(1), m2.group(2))[:60]
+    c1 = re.search(r"([A-Z]{2,}[#-]?)(\d{1,4})", first)
+    c2 = re.search(r"([A-Z]{2,}[#-]?)(\d{1,4})", last)
+    if c1 and c2 and c1.group(1) == c2.group(1) and c1.group(2) != c2.group(2):
+        return "{} to {}{}".format(c1.group(0), c1.group(1), c2.group(2))
     label = "{} to {}".format(first, last)
     return label if len(label) <= 60 else label[:57] + "..."
 
