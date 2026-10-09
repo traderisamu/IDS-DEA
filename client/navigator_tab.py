@@ -1548,10 +1548,12 @@ class Navigator(tk.Frame):
     def _fill_menu(self, menu, entries):
         """Populate a tk.Menu from nested [(label, rel-or-children), ...]
         entries to any depth: "-" is a separator, a bare rel string is an
-        open-folder command, a list is a further cascade. Labels print
-        short codes (collisions keep full names); overlong levels arrive
-        pre-chunked into "first to last" sub-cascades."""
-        for entry in _chunk_menu_entries(_shorten_menu_level(entries)):
+        open-folder command, a list is a further cascade. Chunking runs
+        first on full labels (split points are order-based, so shortening
+        can't move them); display labels compress after, per actual menu -
+        so the collision guard only ever fires on rows that truly render
+        together, never on a pre-chunk level no one sees."""
+        for entry in _shorten_menu_level(_chunk_menu_entries(entries)):
             if entry[0] == "-":
                 menu.add_separator()
             elif isinstance(entry[1], str):
