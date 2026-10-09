@@ -66,16 +66,62 @@ def _folder_menu(base, rel, depth=0, max_depth=3, label=None):
 
 
 def _dir_entries(base, rel):
-    """Sorted list of immediate subfolders under a job-relative path."""
+    """Sorted list of immediate subfolders under a job-relative path.
+    Folders named exactly VOID, OLD, or REF (any case) are left out -
+    void drops, archive dumps, and reference piles never belonged in
+    working menus. Anything merely *containing* those words
+    ("... to VOID", "Threshold") still lists: only exact names match."""
     out = []
     try:
         with os.scandir(os.path.join(base, rel)) as it:
             for e in it:
                 if e.is_dir():
+                    if e.name.strip().upper() in ("VOID", "OLD", "REF"):
+                        continue
                     out.append(e.name)
     except OSError:
         pass
     return sorted(out, key=str.lower)
+
+
+def _short_menu_label(name):
+    """Display-only short code for a menu entry: the embedded #-code
+    ("262601 FBD CD#001 (Sequence Map...)" -> "CD#001"), else the first
+    whitespace-delimited token when it holds a digit ("MC36 - ... " ->
+    "MC36", "2M2W-C3B1 - ..." -> "2M2W-C3B1"), else the full name
+    ("For Approval", "RFI SENT", "Seq 01" are untouched). Open targets
+    never change - only what's printed."""
+    text = str(name or "")
+    m = re.search(r"([A-Z]{2,}#\d+[A-Z0-9-]*)", text)
+    if m:
+        return m.group(1)
+    m = re.match(r"^(\S*\d\S*)", text.strip())
+    if m:
+        return m.group(1)
+    return text
+
+
+def _shorten_menu_level(entries):
+    """One menu level with display labels compressed via
+    _short_menu_label. Entries colliding on the same short code keep
+    their full names so no two rows ever read identically."""
+    shorts = {}
+    for entry in entries or []:
+        if not entry or entry[0] == "-":
+            continue
+        shorts.setdefault(_short_menu_label(entry[0]), []).append(entry[0])
+    dupes = {s for s, owners in shorts.items() if len(owners) > 1}
+    out = []
+    for entry in entries or []:
+        if not entry or entry[0] == "-":
+            out.append(entry)
+            continue
+        short = _short_menu_label(entry[0])
+        if short in dupes:
+            out.append(entry)
+        else:
+            out.append((short,) + tuple(entry[1:]))
+    return out
 
 
 def _cascade_or_open(base, rel, label=None):
@@ -1465,9 +1511,10 @@ class Navigator(tk.Frame):
     def _fill_menu(self, menu, entries):
         """Populate a tk.Menu from nested [(label, rel-or-children), ...]
         entries to any depth: "-" is a separator, a bare rel string is an
-        open-folder command, a list is a further cascade. Overlong levels
-        arrive pre-chunked into "first - last" sub-cascades."""
-        for entry in _chunk_menu_entries(entries):
+        open-folder command, a list is a further cascade. Labels print
+        short codes (collisions keep full names); overlong levels arrive
+        pre-chunked into "first to last" sub-cascades."""
+        for entry in _chunk_menu_entries(_shorten_menu_level(entries)):
             if entry[0] == "-":
                 menu.add_separator()
             elif isinstance(entry[1], str):
@@ -1517,7 +1564,7 @@ class Navigator(tk.Frame):
         mb = ttk.Menubutton(frame, text="\u25BE " + it["label"],
                             style="Card.TMenubutton", width=width)
         menu = tk.Menu(mb, tearoff=0)
-        for label, rel in items:
+        for label, rel in _shorten_menu_level(items):
             menu.add_command(label=label,
                              command=lambda rr=rel: self.open_job_folder(rr))
         mb["menu"] = menu
