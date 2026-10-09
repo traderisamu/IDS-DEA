@@ -87,15 +87,17 @@ def _dir_entries(base, rel):
 def _short_menu_label(name):
     """Display-only short code for a menu entry: the embedded #-code
     ("262601 FBD CD#001 (Sequence Map...)" -> "CD#001"), else the first
-    whitespace-delimited token when it holds a digit ("MC36 - ... " ->
-    "MC36", "2M2W-C3B1 - ..." -> "2M2W-C3B1"), else the full name
-    ("For Approval", "RFI SENT", "Seq 01" are untouched). Open targets
+    whitespace-delimited token when it looks like a code (letters AND
+    digits: "MC36 - ..." -> "MC36", "2M2W-C3B1 - ..." -> "2M2W-C3B1").
+    Pure sequence numbers ("01) To LPM", "031226", "1007 FF") and plain
+    words ("For Approval", "RFI SENT", "Seq 01") are NOT codes - the full
+    name stays, since there the description is the meaning. Open targets
     never change - only what's printed."""
     text = str(name or "")
     m = re.search(r"([A-Z]{2,}#\d+[A-Z0-9-]*)", text)
     if m:
         return m.group(1)
-    m = re.match(r"^(\S*\d\S*)", text.strip())
+    m = re.match(r"^(?=\S*\d)(?=\S*[A-Za-z])(\S+)", text.strip())
     if m:
         return m.group(1)
     return text
