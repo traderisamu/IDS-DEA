@@ -384,13 +384,24 @@ def build_job_sections(job_name, progress=None, cancel=None):
 
 DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "IDS", "Navigator")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
-SECTION_CACHE_FILE = os.path.join(DATA_DIR, "section_cache_v3.json")
+# Bumped whenever menu-tree content rules change (2.6.17 excluded
+# VOID/OLD/REF folders at build time) so stale cached jobs rebuild
+# once instead of showing pre-change entries forever. The orphaned
+# previous file is deleted on load.
+SECTION_CACHE_FILE = os.path.join(DATA_DIR, "section_cache_v4.json")
+SECTION_CACHE_PREVIOUS = (os.path.join(DATA_DIR, "section_cache_v3.json"),)
 
 
 def load_section_cache():
     """Disk cache of built job sections {job_name: sections}. Lets favorites
     and recently opened jobs load instantly instead of re-scanning the network
     share every time. Invalid entries are simply rebuilt by the caller."""
+    for old in SECTION_CACHE_PREVIOUS:
+        try:
+            if os.path.isfile(old) and old != SECTION_CACHE_FILE:
+                os.remove(old)
+        except OSError:
+            pass
     try:
         with open(SECTION_CACHE_FILE, "r", encoding="utf-8") as f:
             d = json.load(f)
