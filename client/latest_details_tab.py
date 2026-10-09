@@ -98,6 +98,26 @@ def _valid_detail_date(date):
     return 1 <= month <= 12 and 1 <= day <= 31
 
 
+def _skip_reason(filename):
+    """Why a pdf is invisible to Latest Details, or None if it simply
+    isn't a detail file at all. The only surfaced reason is "bad-date":
+    right shape (FBD_..._REVx_DETAIL_<date>.pdf or a MAP file) but an
+    unparseable date stamp ("09026", "XXXX", "000000") - almost always a
+    typo worth flagging, since such a file can never rank as latest."""
+    base = os.path.basename(filename or "")
+    m = _DETAIL_RE.match(base)
+    if m:
+        date = m.group("date")
+    else:
+        m = _MAP_FILE_RE.match(base)
+        if not m or not _MAP_RE.search(m.group("body") or ""):
+            return None
+        date = m.group("date")
+    if _valid_detail_date(date):
+        return None
+    return "bad-date"
+
+
 def parse_detail_name(filename):
     """SPS_BS02_(15th) (A)_REV0C_DETAIL_100126.pdf (or an FBD-style map
     like FBD_MC_MAP05 (S2.91)_REV0Q_081326.pdf, no DETAIL keyword) ->
@@ -369,7 +389,8 @@ _SKIP_DIRS = {"CALCS", "MAPS", "REF", "BACKUP", "MODEL", "CAD+SKETCH",
               "RISA INPUT", "RISA OUTPUT"}
 
 
-def scan_job_folders(job_base, code, side, progress=None, cancel=None):
+def scan_job_folders(job_base, code, side, progress=None, cancel=None,
+                     skipped_out=None):
     """Walk a job's detail sources; returns
     {family: {group: {'calc': [paths], 'map': [paths], 'folder': rel}}}.
     job_base/code are split out (instead of a job name) so tests can
@@ -377,7 +398,11 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
 
     Two-phase (enumerate, then parse) so progress(phase, done, total)
     can drive a determinate bar; cancel() returning True aborts with
-    None (the caller keeps whatever it was showing before)."""
+    None (the caller keeps whatever it was showing before).
+
+    skipped_out, when given a dict, receives {"total": n, "files": [...]}
+    of right-shaped but unparseable-date pdfs (typos like a 5-digit
+    date) that could never rank - capped at 50 names, total uncapped."""
     code = (code or "").upper()
     _all_conns = _list_conns(job_base, code, side)
     other_side = "MISC" if side == "STRUCTURAL" else "STRUCTURAL"
@@ -683,6 +708,7 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
     # so package maps inherit their working MAPS family) ----
     groups = {}
     seen_names = set()  # same basename in two places = same issued file
+    skipped = {"total": 0, "files": []}
 
     def _process(chunk, phase):
         total = len(chunk)
@@ -692,7 +718,13 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
             if i % 10 == 0 or i + 1 == total:
                 _report(phase, i + 1, total)
             info = parse_detail_name(os.path.basename(path))
-            if info is None or info["prefix"] != code:
+            if info is None:
+                if _skip_reason(os.path.basename(path)) == "bad-date":
+                    skipped["total"] += 1
+                    if len(skipped["files"]) < 50:
+                        skipped["files"].append(os.path.basename(path))
+                continue
+            if info["prefix"] != code:
                 continue
             base = os.path.basename(path).lower()
             if base in seen_names:
@@ -773,6 +805,32 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
         if side == "MISC" and family not in ("STAIRS", "LADDERS", "RAILINGS",
                                              "GATES", "PIPE SUPPORTS", "EC"):
             continue  # misc is rails/stairs/ladders/gates/pipes/EC only
+        if side != "MISC" and family != "EC":
+            # One row per connection: a bare-token group (submittal
+            # package / sent-to-detailer / loose files, e.g. "SC03")
+            # folds into the folder-named group it resolves to, so the
+            # later _best ranks every source together and a stale package
+            # rev can never shadow the working latest under an identical
+            # label. Never touches EC, stair-qualified, or OTHER groups;
+            # a token with no matching folder group still renders alone.
+            for group in list(fdata):
+                if not re.fullmatch(r"[A-Z]{2,}\d+[A-Z]?", group or ""):
+                    continue
+                if _token_alpha(group) == "EC":
+                    continue
+                target = _folder_desc(family, group)
+                if not target or target == group or target not in fdata:
+                    continue
+                if "STAIR" in target.upper():
+                    continue
+                src, dst = fdata[group], fdata[target]
+                for kind in ("calc", "map"):
+                    dst[kind].extend(src[kind])
+                if not dst["folder"]:
+                    dst["folder"] = src["folder"]
+                if len(src.get("display") or "") > len(dst.get("display") or ""):
+                    dst["display"] = src["display"]
+                del fdata[group]
         grows = {}
         for group, data in fdata.items():
             display = data.get("display") or group
@@ -820,6 +878,9 @@ def scan_job_folders(job_base, code, side, progress=None, cancel=None):
                     grows["{}||{}".format(group, ident)] = row
         if grows:
             winners[family] = grows
+    if skipped_out is not None:
+        skipped_out["total"] = skipped["total"]
+        skipped_out["files"] = list(skipped["files"])
     return winners
 
 
@@ -838,32 +899,55 @@ def get_cached_latest(job_name, side):
     return rows if isinstance(rows, dict) else None
 
 
+def get_cached_skipped(job_name, side):
+    """Last scan's {"total", "files"} of bad-dated skips, or an empty
+    equivalent when never scanned (old cache entries predate it)."""
+    try:
+        ent = _latest_cache_load().get(_cache_key(job_name, side))
+    except Exception:
+        return {"total": 0, "files": []}
+    sk = ent.get("skipped") if isinstance(ent, dict) else None
+    if not isinstance(sk, dict):
+        return {"total": 0, "files": []}
+    try:
+        total = int(sk.get("total") or 0)
+    except (TypeError, ValueError):
+        total = 0
+    files = sk.get("files") or []
+    files = [str(f) for f in files if f][:50]
+    return {"total": total, "files": files}
+
+
 def scan_latest_details(job_name, side, progress=None, cancel=None,
                         use_cache=True):
-    """Full scan for a real job on the JOBS share. {} when the job has
-    no code, the share is unreachable, or nothing is found; None when a
-    cancellation was requested mid-scan. Successful scans refresh the
-    disk cache (see get_cached_latest)."""
+    """Full scan for a real job on the JOBS share. (rows, skipped) - {}
+    rows when the job has no code, the share is unreachable, or nothing
+    is found; None when a cancellation was requested mid-scan. skipped
+    is {"total", "files"} of right-shaped but bad-dated pdfs (see
+    scan_job_folders). Successful scans refresh the disk cache (see
+    get_cached_latest)."""
+    empty_skipped = {"total": 0, "files": []}
     code = parse_job_code(job_name or "")
     if not code:
-        return {}
+        return {}, empty_skipped
     base = os.path.join(JOB_ROOT, job_name)
     if not os.path.isdir(base):
-        return {}
+        return {}, empty_skipped
+    skipped = {"total": 0, "files": []}
     try:
-        rows = scan_job_folders(base, code, side, progress, cancel)
+        rows = scan_job_folders(base, code, side, progress, cancel, skipped)
     except Exception:
         _log.exception("Latest Details scan failed for %s (%s)", job_name, side)
-        return {}
+        return {}, empty_skipped
     if rows is None:
         return None
     try:
         cache = _latest_cache_load()
-        cache[_cache_key(job_name, side)] = {"rows": rows}
+        cache[_cache_key(job_name, side)] = {"rows": rows, "skipped": skipped}
         _latest_cache_save(cache)
     except Exception:
         pass
-    return rows
+    return rows, skipped
 
 
 LATEST_CACHE_FILE = os.path.join(DATA_DIR, "latest_cache.json")
@@ -920,7 +1004,8 @@ class LatestDetailsTab(ttk.Frame):
         self._last_job = None
         self._last_side = None
         self._cancel = None
-        self._shown = None  # (job, side, rows) currently painted
+        self._shown = None  # (job, side, rows, skipped) currently painted
+        self._last_skipped = {"total": 0, "files": []}
         self._fam_names = []
         self._fam_rows = {}
         self._fam_job = None
@@ -977,9 +1062,17 @@ class LatestDetailsTab(ttk.Frame):
                             text="\u26a0 Note: Latest Details is experimental - "
                                  "always confirm against the folders before issuing.")
         warn.pack(fill="x")
-        # Both lines wrap to the actual panel width (a fixed wraplength
-        # overflows narrow windows); height-only change, so no layout loop.
-        for _lbl in (hint, warn):
+        self.skip_label = self._tlabel(self, padding=(10, 0, 10, 0),
+                                      font=("Segoe UI", 8),
+                                      foreground="#B26A00", justify="left",
+                                      cursor="hand2")
+        self.skip_label.pack(fill="x")
+        self.skip_label.bind("<Button-1>", lambda _e: self._show_skipped_list())
+        self.skip_label.pack_forget()  # shown only when a scan skips files
+        # All three lines wrap to the actual panel width (a fixed
+        # wraplength overflows narrow windows); height-only change, so no
+        # layout loop.
+        for _lbl in (hint, warn, self.skip_label):
             _lbl.bind("<Configure>",
                       lambda e, L=_lbl: L.configure(wraplength=max(e.width - 24, 120)))
         self._warn_label = warn
@@ -1058,6 +1151,7 @@ class LatestDetailsTab(ttk.Frame):
             self._set_progress_visible(False)
             self._clear()
             self._shown = None
+            self._show_skipped(None)
             self._message("Pick a job in NaviTool 2.0 first - this panel follows "
                           "whatever job is selected there.")
             return
@@ -1066,6 +1160,7 @@ class LatestDetailsTab(ttk.Frame):
         cached = None if force else get_cached_latest(job, side)
         if cached is not None and (self._shown is None
                                    or self._shown[:2] != (job, side)):
+            self._show_skipped(None if force else get_cached_skipped(job, side))
             self._paint(token, job, side, cached)
         elif cached is None or force:
             self._clear()
@@ -1084,13 +1179,14 @@ class LatestDetailsTab(ttk.Frame):
 
         def work():
             try:
-                rows = scan_latest_details(job, side,
-                                           progress=on_progress,
-                                           cancel=cancel.is_set)
+                got = scan_latest_details(job, side,
+                                          progress=on_progress,
+                                          cancel=cancel.is_set)
+                rows, skipped = got if got is not None else (None, None)
             except Exception:
-                rows = {}
+                rows, skipped = {}, {"total": 0, "files": []}
             try:
-                self.after(0, lambda: self._finish(token, job, side, rows))
+                self.after(0, lambda: self._finish(token, job, side, rows, skipped))
             except Exception:
                 pass
 
@@ -1151,7 +1247,7 @@ class LatestDetailsTab(ttk.Frame):
         except tk.TclError:
             pass
 
-    def _finish(self, token, job, side, rows):
+    def _finish(self, token, job, side, rows, skipped=None):
         if token != self._token:
             return
         try:
@@ -1164,8 +1260,11 @@ class LatestDetailsTab(ttk.Frame):
             # Cancelled - keep whatever was on screen.
             self.prog_label.config(text="Cancelled - showing previous results.")
             return
+        if skipped is None:
+            skipped = {"total": 0, "files": []}
+        self._show_skipped(skipped)
         if self._shown is not None and self._shown[:2] == (job, side) \
-                and self._shown[2] == rows:
+                and self._shown[2] == rows and self._shown[3] == skipped:
             return  # background refresh found nothing new - no flicker
         self._paint(token, job, side, rows)
 
@@ -1186,6 +1285,63 @@ class LatestDetailsTab(ttk.Frame):
                      wraplength=700, justify="left").grid(row=0, column=0,
                                                           padx=6, pady=24, sticky="w")
 
+    def _show_skipped(self, skipped):
+        """Amber one-liner under the header when the last scan passed over
+        right-shaped but bad-dated pdfs (typos like a 5-digit date that can
+        never rank as latest). Click lists them. Hidden when none."""
+        self._last_skipped = skipped or {"total": 0, "files": []}
+        try:
+            total = int(self._last_skipped.get("total") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        if total <= 0:
+            try:
+                self.skip_label.pack_forget()
+            except tk.TclError:
+                pass
+            return
+        noun = "file" if total == 1 else "files"
+        self.skip_label.configure(
+            text="\u26a0 {} {} skipped: unparseable dates (click to list).".format(total, noun))
+        try:
+            self.skip_label.pack(fill="x")
+        except tk.TclError:
+            pass
+
+    def _show_skipped_list(self):
+        files = list((self._last_skipped or {}).get("files") or [])
+        total = 0
+        try:
+            total = int((self._last_skipped or {}).get("total") or 0)
+        except (TypeError, ValueError):
+            pass
+        if total <= 0:
+            return
+        win = tk.Toplevel(self)
+        win.title("Skipped files - bad dates")
+        win.geometry("560x320")
+        try:
+            win.transient(self.winfo_toplevel())
+        except tk.TclError:
+            pass
+        ttk.Label(win, text="These look like issued details but their date "
+                  "stamps can't be parsed, so they never rank as latest. "
+                  "Fix the filename dates to include them:",
+                  font=("Segoe UI", 9), wraplength=520,
+                  justify="left").pack(anchor="w", padx=12, pady=(12, 6))
+        body = ttk.Frame(win)
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+        box = tk.Listbox(body, font=("Segoe UI", 9), activestyle="none")
+        vsb = ttk.Scrollbar(body, orient="vertical", command=box.yview)
+        box.configure(yscrollcommand=vsb.set)
+        box.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+        for name in files:
+            box.insert("end", name)
+        if total > len(files):
+            box.insert("end", "... and {} more".format(total - len(files)))
+        ttk.Button(win, text="Close", command=win.destroy).pack(pady=(0, 12))
+
     # ---------------------------- paint ----------------------------
     def _paint(self, token, job, side, rows):
         if token != self._token:
@@ -1196,7 +1352,7 @@ class LatestDetailsTab(ttk.Frame):
         except tk.TclError:
             return
         self._clear()
-        self._shown = (job, side, rows)
+        self._shown = (job, side, rows, self._last_skipped)
         self.job_label.config(text="{}  \u2022  {}".format(job, SIDE_LABELS[side]))
         self.body.grid_columnconfigure(1, weight=1)
         if not rows:

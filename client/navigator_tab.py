@@ -110,9 +110,9 @@ def _chunk_menu_entries(entries):
                 take = size + (1 if c < extra else 0)
                 part = run[idx:idx + take]
                 idx += take
-                first = str(part[0][0])[:24]
-                last = str(part[-1][0])[:24]
-                out.append(("{} - {}".format(first, last), list(part)))
+                first = str(part[0][0])[:28]
+                last = str(part[-1][0])[:28]
+                out.append(("{} to {}".format(first, last), list(part)))
         else:
             out.extend(run)
         del run[:]
