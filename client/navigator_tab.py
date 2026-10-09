@@ -209,6 +209,21 @@ def _chunk_menu_entries(entries):
     return out
 
 
+def _group_calc_packages(sent, names):
+    """SENT CALCS menu tail for the package folders. CALC#-pattern
+    packages nest under a CALC cascade once they outnumber
+    MENU_CHUNK_SIZE (an AMG-scale run chunks within it); anything else
+    stays a top-level leaf, and small sets stay flat exactly as before.
+    Children are plain open-folder leaves - packages can be enormous,
+    so their contents are never enumerated at build time."""
+    pkgs = [n for n in names if re.search(r"CALC#\d+", n)]
+    if len(pkgs) <= MENU_CHUNK_SIZE:
+        return [(n, sent + "\\" + n) for n in names]
+    rest = [n for n in names if not re.search(r"CALC#\d+", n)]
+    kids = [(n, sent + "\\" + n) for n in pkgs]
+    return [("CALC", kids)] + [(n, sent + "\\" + n) for n in rest]
+
+
 def build_job_sections(job_name, progress=None, cancel=None):
     """Return [(title, [item, ...]), ...]. An item is either
     {"kind":"button", label, rel, icon} or
@@ -271,11 +286,10 @@ def build_job_sections(job_name, progress=None, cancel=None):
     if _exists(base, sent):
         menu = [("SENT CALCS", sent), ("-", None)]
         names = _dir_entries(base, sent)
-        for i, name in enumerate(names):
-            if _aborted():
-                return None
-            menu.append((name, sent + "\\" + name))
-            _report("Reading SENT CALCS… {}/{}".format(i + 1, len(names)))
+        if _aborted():
+            return None
+        menu.extend(_group_calc_packages(sent, names))
+        _report("Reading SENT CALCS… {}/{}".format(len(names), len(names)))
         calcs.append({"kind": "dropdown", "label": "SENT CALCS", "icon": "\U0001F4E4", "menu": menu})
     if calcs:
         sections.append(("CALCS", calcs))
