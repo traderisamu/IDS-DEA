@@ -125,7 +125,7 @@ class _SuggestPopup:
         self.combo.focus_set()
 
 
-def enable_typeahead(combo, get_all_values):
+def enable_typeahead(combo, get_all_values, show_all_on_empty=True):
     """
     combo: an editable (not readonly) ttk.Combobox.
     get_all_values: zero-arg callable returning the current full list of
@@ -133,6 +133,11 @@ def enable_typeahead(combo, get_all_values):
                      so keep it cheap (return a cached list, not a fresh
                      disk read - callers should refresh that cache
                      separately, e.g. after saving a new entry).
+    show_all_on_empty: when False, an empty box never pops the full
+                     history list (the user must type at least one
+                     character first). Used for Details fields so a stray
+                     Down/Enter on a blank box can't drop a stale
+                     suggestion like "test" into the entry.
     """
     popup = _SuggestPopup(combo)
     combo._suggest_popup = popup  # keep a reference alive on the widget
@@ -140,6 +145,9 @@ def enable_typeahead(combo, get_all_values):
     def refresh(_event=None):
         typed = combo.get()
         all_values = [str(v) for v in (get_all_values() or [])]
+        if not typed.strip() and not show_all_on_empty:
+            popup.hide()
+            return
         if (typed and typed.strip().isdigit() and all_values
                 and all(v.isdigit() for v in all_values)):
             # Count-style history (joint/sheet numbers): narrowing digits

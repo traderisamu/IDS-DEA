@@ -345,7 +345,14 @@ def _sort_log_sheet_newest_first(ws):
         t[1][0], t[1][6] if len(t[1]) > 6 else None, t[0]), reverse=True)
     for i, (_, values) in enumerate(indexed, start=2):
         for col, val in enumerate(values, start=1):
-            ws.cell(row=i, column=col, value=val).font = BODY_FONT
+            # NOTE: ws.cell(row, col, value=None) SILENTLY KEEPS the old
+            # value in openpyxl 3.1.x - so assign .value directly. Otherwise
+            # blank cells never clear the previous occupant's content after
+            # a re-sort, and one entry's Details/Remarks visibly "copies"
+            # onto the other entries on every add/edit.
+            c = ws.cell(row=i, column=col)
+            c.value = val
+            c.font = BODY_FONT
     # Drop any stale rows left below (e.g. interior blank rows compacted out).
     last = len(indexed) + 1
     if ws.max_row > last:
@@ -368,6 +375,8 @@ def add_log_entry(shared_path, employee_name, entry_date, job, work_desc, hours,
     _sort_log_sheet_newest_first(ws)
     _atomic_save(wb, path)
     wb.close()
+    log.info("add entry: employee=%r date=%s job=%r workdesc=%r hours=%r details=%r remarks=%r",
+             employee_name, _date_str(entry_date), job, work_desc, hours, details, remarks)
     return get_day_total_hours(shared_path, employee_name, entry_date)
 
 
@@ -379,6 +388,9 @@ def update_log_entry(shared_path, employee_name, excel_row, job, work_desc, hour
     path = ensure_employee_file(shared_path, employee_name)
     wb = openpyxl.load_workbook(path)
     ws = wb["Log"]
+    before = (ws.cell(row=excel_row, column=2).value, ws.cell(row=excel_row, column=3).value,
+              ws.cell(row=excel_row, column=4).value, ws.cell(row=excel_row, column=5).value,
+              ws.cell(row=excel_row, column=6).value)
     ws.cell(row=excel_row, column=2, value=job or "").font = BODY_FONT
     ws.cell(row=excel_row, column=3, value=work_desc or "").font = BODY_FONT
     ws.cell(row=excel_row, column=4, value=float(hours)).font = BODY_FONT
@@ -388,6 +400,10 @@ def update_log_entry(shared_path, employee_name, excel_row, job, work_desc, hour
     _sort_log_sheet_newest_first(ws)  # an edit can change a row's position
     _atomic_save(wb, path)
     wb.close()
+    log.info("update entry: employee=%r excel_row=%s before(job=%r workdesc=%r hours=%r details=%r remarks=%r) "
+             "after(job=%r workdesc=%r hours=%r details=%r remarks=%r)",
+             employee_name, excel_row, before[0], before[1], before[2], before[3], before[4],
+             job, work_desc, hours, details, remarks)
 
 
 def delete_log_entry(shared_path, employee_name, row_index_in_sheet):
@@ -395,13 +411,21 @@ def delete_log_entry(shared_path, employee_name, row_index_in_sheet):
     path = ensure_employee_file(shared_path, employee_name)
     wb = openpyxl.load_workbook(path)
     ws = wb["Log"]
+    removed = [ws.cell(row=row_index_in_sheet, column=c).value for c in range(1, 8)]
     ws.delete_rows(row_index_in_sheet, 1)
     _atomic_save(wb, path)
     wb.close()
+    log.info("delete entry: employee=%r excel_row=%s removed=%r", employee_name, row_index_in_sheet, removed)
 
 
 def read_log_entries(shared_path, employee_name, start_date=None, end_date=None):
-    """Returns list of dicts, each with an 'excel_row' key for later editing/deleting."""
+    """Returns list of dicts, each with an 'excel_row' key for later editing/deleting.
+
+    Blank Details/Remarks cells come back from openpyxl as None - they are
+    normalized to "" here so the grid displays empty cells as empty (not
+    the text "None") and downstream code never has to None-check them.
+    A literal "None" STRING typed into a cell is left untouched (that is
+    real cell content, only fixable by editing the row)."""
     path = _resolve_existing_file_path(shared_path, employee_name)
     if not os.path.isfile(path):
         check_shared_reachable(shared_path)  # tell "drive is down" apart from "no file yet"
@@ -423,8 +447,8 @@ def read_log_entries(shared_path, employee_name, start_date=None, end_date=None)
             "job": row[1].value,
             "work_description": row[2].value,
             "hours": row[3].value or 0,
-            "details": row[4].value,
-            "remarks": row[5].value,
+            "details": row[4].value if row[4].value is not None else "",
+            "remarks": row[5].value if row[5].value is not None else "",
             "entered_at": _entered_at_str(row[6].value),
         })
     wb.close()
@@ -889,7 +913,10 @@ def cutoff_summary(shared_path, employee_name, start_date, end_date):
     Only JOB codes with at least one hour logged SOMEWHERE in this
     period get a column - a code nobody touched this period just isn't
     shown, rather than cluttering the table with an all-blank column.
-    Columns are sorted alphabetically, left to right. Matching against
+    Columns run left to right in the order each JOB code was FIRST used
+    in this period (by calendar date, then entry time) - so a newly
+    added job simply appears as a new column at the right end instead
+    of reshuffling the existing columns. Matching against
     logged entries is case-insensitive/whitespace-trimmed, so
     'engg-cub' and 'ENGG-CUB' typed on different days still count as
     the same column (using whichever spelling was typed first).
@@ -902,7 +929,8 @@ def cutoff_summary(shared_path, employee_name, start_date, end_date):
     entries = read_log_entries(shared_path, employee_name, start_date, end_date)
     by_date = {}
     hours_norm = {}  # normalized JOB code -> [first-seen original spelling, total hours]
-    for e in entries:
+    first_seen_order = []  # normalized codes, chronological first-use order (new jobs append at the end)
+    for e in sorted(entries, key=lambda x: (x["date"], x["entered_at"] or "")):
         by_date.setdefault(e["date"], []).append(e)
         job = str(e.get("job") or "").strip()
         if not job:
@@ -913,8 +941,10 @@ def cutoff_summary(shared_path, employee_name, start_date, end_date):
             hours_norm[norm][1] += hrs
         else:
             hours_norm[norm] = [job, hrs]
+            first_seen_order.append(norm)
 
-    job_codes = sorted((orig for orig, total in hours_norm.values() if total > 0), key=str.upper)
+    job_codes = [hours_norm[norm][0] for norm in first_seen_order
+                 if hours_norm[norm][1] > 0]
     job_codes_norm = [c.upper() for c in job_codes]
 
     days = []

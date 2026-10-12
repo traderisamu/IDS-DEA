@@ -672,7 +672,8 @@ class DEAApp(tk.Tk):
         self._refresh_suggestions()
         self._refresh_workdesc_options()
         enable_typeahead(self.job_combo, lambda: self._job_suggestions)
-        enable_typeahead(self.details_combo, lambda: self._details_suggestions)
+        enable_typeahead(self.details_combo, lambda: self._details_suggestions,
+                         show_all_on_empty=False)
 
         list_frame = ttk.LabelFrame(frame, text="Entries for selected date (double-click a row to edit)", padding=8)
         list_frame.pack(fill="both", expand=True)
@@ -913,6 +914,14 @@ class DEAApp(tk.Tk):
         excel_row = int(self.tree.item(sel[0], "tags")[0])
         values = self.tree.item(sel[0], "values")
         job_val, workdesc_val, hours_val, details_val, remarks_val = values
+        # The grid renders both true blanks and legacy literal "None"
+        # strings the same way - but saving must never write the TEXT
+        # "None" back into a cell the user left blank. Coerce both to
+        # empty here so an untouched field stays untouched.
+        if details_val is None or str(details_val).strip().lower() == "none":
+            details_val = ""
+        if remarks_val is None or str(remarks_val).strip().lower() == "none":
+            remarks_val = ""
 
         win = tk.Toplevel(self)
         win.title("Edit Entry")
@@ -968,7 +977,8 @@ class DEAApp(tk.Tk):
         job_var.trace_add("write", refresh_edit_details)
         wd_var.trace_add("write", refresh_edit_details)
         refresh_edit_details()
-        enable_typeahead(details_entry, lambda: edit_details_history["items"])
+        enable_typeahead(details_entry, lambda: edit_details_history["items"],
+                         show_all_on_empty=False)
         edit_tooltip_label = ttk.Label(form, text="", font=("Arial", 8, "italic"), foreground="#F57F17")
         edit_tooltip_label.grid(row=3, column=2, columnspan=2, sticky="w", padx=(6, 0))
 
@@ -1025,6 +1035,40 @@ class DEAApp(tk.Tk):
                 messagebox.showwarning(
                     "Numbers Only",
                     f"'{wd_var.get().strip()}' expects a number for Details.\n\nHint: {tip}",
+                    parent=win
+                )
+                return
+            try:
+                fresh = ds.read_log_entries(self.shared_path, self.employee_name)
+            except ds.DriveUnreachableError as e:
+                messagebox.showerror("Shared Drive Unreachable", str(e), parent=win)
+                return
+            try:
+                snapshot_hours = float(hours_val)
+            except (TypeError, ValueError):
+                snapshot_hours = None
+            match = next((r for r in fresh if r["excel_row"] == excel_row), None)
+            try:
+                match_hours = float(match["hours"] or 0) if match else None
+            except (TypeError, ValueError):
+                match_hours = None
+            if (match is None
+                    or str(match.get("job") or "").strip() != str(job_val).strip()
+                    or str(match.get("work_description") or "").strip() != str(workdesc_val).strip()
+                    or snapshot_hours is None or match_hours != snapshot_hours):
+                # The sheet was re-sorted (or another window/user touched
+                # the file) between opening this dialog and pressing Save -
+                # writing to this physical row now would land on a DIFFERENT
+                # entry, which is exactly how one entry's Details/Remarks
+                # ends up "copied" onto other entries. Refuse instead.
+                log.warning("edit save refused: excel_row %s no longer matches opened values "
+                            "(job=%r workdesc=%r hours=%r)", excel_row, job_val, workdesc_val, hours_val)
+                messagebox.showwarning(
+                    "Entry Moved",
+                    "This entry changed in the file while the edit window was open "
+                    "(the log re-sorts on every save, or another window/user saved first).\n\n"
+                    "Saving now would write onto a different entry, so it was blocked. "
+                    "Please close this window and reopen the entry to edit it.",
                     parent=win
                 )
                 return
@@ -1861,7 +1905,42 @@ class DEAApp(tk.Tk):
         messagebox.showwarning("Reminder - Log Your Accomplishments", msg)
 
 
+def _acquire_single_instance():
+    """Named-mutex single-instance guard (Windows). Returns the mutex
+    handle when this is the only running copy, else None.
+
+    Why: the app hides to the tray instead of exiting, so a second
+    double-clicked copy opens a second window with a STALE grid. Editing
+    from a stale grid saves to a physical Excel row that now belongs to
+    a different entry after the newest-first re-sort - which is exactly
+    how one entry's Details/Remarks ends up "copied" onto other
+    entries. Fails open (returns a truthy sentinel) on any error so
+    this guard can never block a launch."""
+    try:
+        import ctypes
+        mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "IDS_DEA_Logger_SingleInstance")
+        if not mutex:
+            return True
+        if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+            ctypes.windll.kernel32.CloseHandle(mutex)
+            return None
+        return mutex
+    except Exception:
+        return True
+
+
 def main():
+    if _acquire_single_instance() is None:
+        try:
+            messagebox.showwarning(
+                "Already Running",
+                "IDS DEA Logger is already running (it hides to the system tray "
+                "instead of exiting - look for its icon near the clock).\n\n"
+                "This second copy will not open, so edits always go to the right entry."
+            )
+        except Exception:
+            pass
+        return
     app = DEAApp()
     app.mainloop()
 

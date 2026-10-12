@@ -5,7 +5,8 @@ payroll cutoff period (23rd-7th or 8th-22nd), with an "Export to
 Excel/CSV..." button. Built to make manual entry into the company's
 Online Timesheet Portal faster - a row can be read straight off and
 typed in. Only JOB codes with at least one hour logged somewhere in
-the period get a column, sorted alphabetically left to right.
+the period get a column, in the order each code was first used (a new
+job appends a column at the right end).
 
 Used from two places:
   - client/main_app.py: self-service, always the signed-in employee,
