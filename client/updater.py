@@ -6,9 +6,12 @@ to the staged IDS_DEA_Logger.exe on the shared drive and compares it with
 its own APP_VERSION. When the staged build is newer it is downloaded to a
 .pending file, a tiny updater .bat is written, and the app relaunches
 itself through it: the bat waits for the old process to exit (Windows
-cannot overwrite a running exe), swaps the new exe in (keeping one .bak),
-and starts it again. A manual "Check for Updates" runs the same path on
-demand.
+cannot overwrite a running exe - exact PID match, abandoning after
+~30s so a stuck handoff can never loop forever), swaps the new exe
+in (keeping one .bak), and starts it again. A manual "Check for
+Updates" runs the same path on demand. The handoff console is hidden;
+the bat deletes itself either way, and stale .pending files are
+cleaned at startup (see cleanup_stale_pending).
 
 Safety rails, all deliberate:
 - Never blocks launch, logging, or reminders; every failure (offline
@@ -131,6 +134,30 @@ def _stage_files(app, dist_folder):
         return None
 
 
+def cleanup_stale_pending(folder=None, max_age_hours=24):
+    """Deletes .pending.exe files old enough that no live updater run
+    could own them. A pending file outlives its run only when a past
+    update attempt died mid-swap - leaving it around lets a future
+    stale handoff copy it over a newer install. Returns count removed.
+    Only ever touches our own PENDING_SUFFIX files, nothing else."""
+    try:
+        folder = folder or install_dir()
+        cutoff = time.time() - max_age_hours * 3600
+        removed = 0
+        for fname in os.listdir(folder):
+            if not fname.endswith(PENDING_SUFFIX):
+                continue
+            try:
+                if os.path.getmtime(os.path.join(folder, fname)) < cutoff:
+                    os.remove(os.path.join(folder, fname))
+                    removed += 1
+            except OSError:
+                pass
+        return removed
+    except OSError:
+        return 0
+
+
 _UPDATER_BAT = """@echo off
 setlocal
 set "TARGET=%~1"
@@ -139,12 +166,18 @@ set "BACKUP=%~3"
 set "NOTICE=%~4"
 set "OLDVER=%~5"
 set "PID=%~6"
+set "WAITS=0"
 :waitloop
-tasklist /FI "PID eq %PID%" 2>nul | find "%PID%" >nul
-if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
-    goto :waitloop
-)
+tasklist /FI "PID eq %PID%" /FO CSV /NH 2>nul | findstr /R /C:"\",\"%PID%\",\"" >nul
+if errorlevel 1 goto :swapped
+set /a WAITS+=1
+if %WAITS% GEQ 30 goto :giveup
+timeout /t 1 /nobreak >nul
+goto :waitloop
+:giveup
+del "%PENDING%" >nul 2>&1
+(goto) 2>nul & del "%~f0"
+:swapped
 if exist "%TARGET%" copy /Y "%TARGET%" "%BACKUP%" >nul
 copy /Y "%PENDING%" "%TARGET%" >nul
 del "%PENDING%" >nul 2>&1
@@ -169,7 +202,8 @@ def _relaunch_through_updater(app, target, pending):
              C.APP_VERSION, str(os.getpid())],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL, close_fds=True,
-            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
+            creationflags=(getattr(subprocess, "DETACHED_PROCESS", 0)
+                           | getattr(subprocess, "CREATE_NO_WINDOW", 0)),
         )
     except Exception:
         return False

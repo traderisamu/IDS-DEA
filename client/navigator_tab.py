@@ -88,13 +88,15 @@ def _short_menu_label(name):
     """Display-only short code for a menu entry: the embedded #-code
     ("262601 FBD CD#001 (Sequence Map...)" -> "CD#001"), else a from/to
     range when both ends hold a digit ("032626 - S2 to 050926E - giza"
-    -> "032626 to 050926E"), else the first whitespace-delimited token
-    when it looks like a code (letters AND digits: "MC36 - ..." ->
-    "MC36", "2M2W-C3B1 - ..." -> "2M2W-C3B1"). Pure sequence numbers
-    ("01) To LPM", "031226", "1007 FF") and plain words ("For Approval",
-    "RFI SENT", "Seq 01", "Wbm to Wcol Web") are NOT codes - the full
-    name stays, since there the description is the meaning. Open targets
-    never change - only what's printed."""
+    -> "032626 to 050926E"), else a leading date ("061826 - Seq.18M
+    Stair..." -> "061826" - sketch folders are date-filed), else the
+    first whitespace-delimited token when it looks like a code (letters
+    AND digits: "MC36 - ..." -> "MC36", "2M2W-C3B1 - ..." ->
+    "2M2W-C3B1"). Pure sequence numbers ("01) To LPM", "031226",
+    "1007 FF") and plain words ("For Approval", "RFI SENT", "Seq 01",
+    "Wbm to Wcol Web") are NOT codes - the full name stays, since there
+    the description is the meaning. Open targets never change - only
+    what's printed."""
     text = str(name or "")
     m = re.search(r"([A-Z]{2,}#\d+[A-Z0-9-]*)", text)
     if m:
@@ -103,6 +105,9 @@ def _short_menu_label(name):
                  text.strip(), re.IGNORECASE)
     if m:
         return "{} to {}".format(m.group(1), m.group(2))
+    m = re.match(r"^(\d{4,8})\s+-\s+", text.strip())
+    if m:
+        return m.group(1)
     m = re.match(r"^(?=\S*\d)(?=\S*[A-Za-z])(\S+)", text.strip())
     if m:
         return m.group(1)

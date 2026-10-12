@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 import datetime as dt
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -91,6 +92,7 @@ class DEAApp(tk.Tk):
         ensure_desktop_shortcut()
         self._start_hotkey()
         UPD.consume_update_notice(self)
+        UPD.cleanup_stale_pending()
         UPD.auto_check(self)
 
         # Always open the main window on launch - manual or auto-started
@@ -376,12 +378,41 @@ class DEAApp(tk.Tk):
             # is the only way out, so behave like a normal app close.
             self._quit_app()
 
-    def _quit_app(self):
+    def _begin_force_quit(self, delay=5.0):
+        """Arm a dead-man switch: no matter what hangs below (a blocking
+        tray stop is the classic), the process is guaranteed gone after
+        `delay` seconds, so the updater waiting on our PID can never loop
+        forever. Normal teardown exits first and the timer dies with it."""
+        try:
+            _kill = threading.Timer(delay, lambda: os._exit(0))
+            _kill.daemon = True
+            _kill.start()
+        except Exception:
+            pass
+
+    def _stop_helpers(self):
+        """Stop the hotkey listener and tray icon, never letting a
+        misbehaving one trap process teardown (joins time out)."""
         if self.hotkey is not None:
-            self.hotkey.stop()
+            try:
+                self.hotkey.stop()
+            except Exception:
+                pass
         if self.tray is not None:
-            self.tray.stop()
-        self.destroy()
+            try:
+                _t = threading.Thread(target=self.tray.stop, daemon=True)
+                _t.start()
+                _t.join(timeout=3.0)
+            except Exception:
+                pass
+
+    def _quit_app(self):
+        self._begin_force_quit()
+        self._stop_helpers()
+        try:
+            self.destroy()
+        except tk.TclError:
+            pass
         sys.exit(0)
 
     def _reset_user_from_pin_dialog(self, pin_window):
@@ -402,11 +433,12 @@ class DEAApp(tk.Tk):
         def do_reset():
             LS.clear_employee_name()
             messagebox.showinfo("Done", "Saved name cleared on this PC. Please restart the app.")
-            if self.hotkey is not None:
-                self.hotkey.stop()
-            if self.tray is not None:
-                self.tray.stop()
-            self.destroy()
+            self._begin_force_quit()
+            self._stop_helpers()
+            try:
+                self.destroy()
+            except tk.TclError:
+                pass
             sys.exit(0)
 
         require_admin_approval(
