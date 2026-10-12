@@ -85,19 +85,24 @@ def _dir_entries(base, rel):
 
 
 def _short_menu_label(name):
-    """Display-only short code for a menu entry: the embedded #-code
-    ("262601 FBD CD#001 (Sequence Map...)" -> "CD#001"), else a from/to
-    range when both ends hold a digit ("032626 - S2 to 050926E - giza"
-    -> "032626 to 050926E"), else a leading date ("061826 - Seq.18M
-    Stair..." -> "061826" - sketch folders are date-filed), else the
-    first whitespace-delimited token when it looks like a code (letters
-    AND digits: "MC36 - ..." -> "MC36", "2M2W-C3B1 - ..." ->
-    "2M2W-C3B1"). Pure sequence numbers ("01) To LPM", "031226",
-    "1007 FF") and plain words ("For Approval", "RFI SENT", "Seq 01",
-    "Wbm to Wcol Web") are NOT codes - the full name stays, since there
-    the description is the meaning. Open targets never change - only
-    what's printed."""
+    """Display-only short code for a menu entry: an already-ranged "X
+    to Y" header is kept verbatim, so a chunk range is never truncated
+    to its first endpoint (leaf folders essentially never take that
+    exact single-token shape, and keeping input unchanged is harmless
+    when they do); else the embedded #-code ("262601 FBD CD#001
+    (Sequence Map...)" -> "CD#001"), else a from/to range when both
+    ends hold a digit ("032626 - S2 to 050926E - giza" -> "032626 to
+    050926E"), else a leading date ("061826 - Seq.18M Stair..." ->
+    "061826" - sketch folders are date-filed), else the first
+    whitespace-delimited token when it looks like a code (letters AND
+    digits: "MC36 - ..." -> "MC36", "2M2W-C3B1 - ..." -> "2M2W-C3B1").
+    Pure sequence numbers ("01) To LPM", "031226", "1007 FF") and plain
+    words ("For Approval", "RFI SENT", "Seq 01", "Wbm to Wcol Web") are
+    NOT codes - the full name stays, since there the description is the
+    meaning. Open targets never change - only what's printed."""
     text = str(name or "")
+    if re.match(r"^(\S+) to (\S+)$", text.strip()):
+        return text
     m = re.search(r"([A-Z]{2,}#\d+[A-Z0-9-]*)", text)
     if m:
         return m.group(1)
@@ -153,15 +158,18 @@ MENU_CHUNK_SIZE = 25
 
 def _chunk_range_label(first, last):
     """Compact "CD#001 to CD#025" / "MC01 to MC35" / "031226 to 033126"
-    chunk label from the chunk's real first/last entry names. Two rules,
-    in order: (1) same leading text plus a trailing number on both sides
-    collapses to first-full-name + last-number (number strings kept
-    verbatim, so zero-padding and "#" styles survive); (2) same embedded
-    PREFIX#/-digits code with different numbers (the CD number buried in
+    chunk label from the chunk's real first/last entry names. In order:
+    (1) same leading text plus a trailing number on both sides collapses
+    to first-full-name + last-number (number strings kept verbatim, so
+    zero-padding and "#" styles survive); (2) same embedded PREFIX#/-
+    digits code with different numbers (the CD number buried in
     "262601 FBD CD#001 (Sequence Map...)") collapses to "CD#001 to
     CD#025". Single-letter codes (W21) and digit-free names can never
-    match. Anything else falls back to the full "first to last" form,
-    truncated so one long folder name can't blow out menu width."""
+    match. Anything else composes from the entries' own short display
+    forms ("050926E - per CD132" .. "SQ_004 Material Grade" becomes
+    "050926E to SQ_004" instead of a full-text range); only a degenerate
+    equal-short pair falls back to truncated full names, so a chunk
+    header is always short and always bounds its contents."""
     first, last = str(first or "").strip(), str(last or "").strip()
     m1 = re.match(r"^(.*?)(\d+)$", first)
     m2 = re.match(r"^(.*?)(\d+)$", last)
@@ -175,6 +183,9 @@ def _chunk_range_label(first, last):
     r2 = re.match(r"^(\S+) to (\S+)$", last)
     if r1 and r2:
         return "{} to {}".format(r1.group(1), r2.group(2))
+    s1, s2 = _short_menu_label(first), _short_menu_label(last)
+    if s1 and s2 and s1 != s2:
+        return "{} to {}".format(s1, s2)
     label = "{} to {}".format(first, last)
     return label if len(label) <= 60 else label[:57] + "..."
 
@@ -904,7 +915,7 @@ class Navigator(tk.Frame):
 
     def _build_ui(self):
         self.configure(bg="#f5f6f8")
-        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(2, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
         sidebar = ttk.Frame(self, style="Sidebar.TFrame", padding=(14, 16))
@@ -912,6 +923,24 @@ class Navigator(tk.Frame):
         sidebar.configure(width=265)
         sidebar.grid_propagate(False)
         self._sidebar = sidebar
+        self._sidebar_manual = False
+        self._grip_start_x = 0
+        self._grip_start_w = 265
+        try:
+            _saved = int((self.settings or {}).get("sidebar_width") or 0)
+        except (TypeError, ValueError):
+            _saved = 0
+        if 180 <= _saved <= 520:
+            sidebar.configure(width=_saved)
+            self._sidebar_manual = True
+        grip = tk.Frame(self, bg="#20252b", cursor="sb_h_double_arrow", width=6)
+        grip.grid(row=0, column=1, sticky="ns")
+        grip.grid_propagate(False)
+        grip.bind("<Button-1>", self._sidebar_grip_press)
+        grip.bind("<B1-Motion>", self._sidebar_grip_drag)
+        grip.bind("<ButtonRelease-1>", self._sidebar_grip_release)
+        grip.bind("<Double-Button-1>", self._sidebar_grip_reset)
+        self._sidebar_grip = grip
 
         ttk.Label(sidebar, text="NAVITOOL 2.0", style="Sidebar.TLabel",
                   font=("Segoe UI", 14, "bold")).pack(anchor="w", pady=(0, 18))
@@ -959,7 +988,7 @@ class Navigator(tk.Frame):
         ttk.Button(sidebar, text="\u21bb Refresh Jobs", command=self.refresh_jobs).pack(fill="x", pady=(10, 5))
 
         main = ttk.Frame(self, style="App.TFrame", padding=(22, 18))
-        main.grid(row=0, column=1, sticky="nsew")
+        main.grid(row=0, column=2, sticky="nsew")
         main.grid_columnconfigure(0, weight=1)
         main.grid_rowconfigure(4, weight=1)
 
@@ -1070,7 +1099,11 @@ class Navigator(tk.Frame):
         (a fixed width clips names under display scaling). Widest favorite
         / job text plus padding, clamped so one long name can't eat the
         window. Re-run when the job list changes, not on every keystroke
-        of the search box (stability over twitchiness)."""
+        of the search box (stability over twitchiness). Yields entirely
+        once the user has dragged the grip (double-click the grip to go
+        back to auto-fit)."""
+        if getattr(self, "_sidebar_manual", False):
+            return
         try:
             import tkinter.font as tkfont
             font = tkfont.Font(root=self, family="Segoe UI", size=9)
@@ -1081,6 +1114,43 @@ class Navigator(tk.Frame):
             self._sidebar.configure(width=width)
         except Exception:
             pass
+
+    def _sidebar_grip_press(self, event):
+        self._grip_start_x = event.x_root
+        try:
+            self._grip_start_w = int(self._sidebar.cget("width")) or 265
+        except (tk.TclError, TypeError, ValueError):
+            self._grip_start_w = 265
+        return "break"
+
+    def _sidebar_grip_drag(self, event):
+        try:
+            w = self._grip_start_w + (event.x_root - self._grip_start_x)
+            w = min(max(int(w), 180), 520)
+            self._sidebar.configure(width=w)
+            self._sidebar_manual = True
+        except (tk.TclError, AttributeError):
+            pass
+        return "break"
+
+    def _sidebar_grip_release(self, _event=None):
+        try:
+            self.settings["sidebar_width"] = int(self._sidebar.cget("width"))
+            save_settings(self.settings)
+        except (tk.TclError, TypeError, ValueError):
+            pass
+
+    def _sidebar_grip_reset(self, _event=None):
+        """Double-click the grip: forget the manual width and go back to
+        content-fitting."""
+        try:
+            self.settings.pop("sidebar_width", None)
+            save_settings(self.settings)
+        except Exception:
+            pass
+        self._sidebar_manual = False
+        self._fit_sidebar_width()
+        return "break"
 
     def _fit_canvas_width(self, canvas):
         """Keep a page canvas's inner frame as wide as the canvas so the
