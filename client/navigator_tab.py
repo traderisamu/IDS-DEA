@@ -1004,9 +1004,6 @@ class Navigator(tk.Frame):
         actions.grid(row=1, column=0, sticky="ew", pady=(10, 4))
         ttk.Button(actions, text="Open Job", command=self.open_current_job).pack(side="left")
         ttk.Button(actions, text="Add to Favorites", command=self.add_favorite).pack(side="left", padx=6)
-        self._quick_dot = orange_dot_image()
-        ttk.Button(actions, text=" Quick Links", image=self._quick_dot,
-                   compound="left", command=self._jump_to_quick).pack(side="left")
 
         self.status_var = tk.StringVar(value="")
         status = ttk.Label(main, textvariable=self.status_var, style="Sub.TLabel")
@@ -1042,11 +1039,13 @@ class Navigator(tk.Frame):
         self._set_folders_progress_visible(False)
 
         # Fixed tab strip + one scroll region per page: the Job Folders /
-        # Latest Details / Quick Links tabs never scroll away; each page
-        # scrolls its own content (exactly one canvas per scrolling page,
-        # so the mouse wheel never fights nested scrollers). The Latest
-        # page holds only the panel, which freezes its own header and
-        # family tabs above its rows canvas (see _mount_latest_panel).
+        # Latest Details tabs never scroll away; each page scrolls its own
+        # content (exactly one canvas per scrolling page, so the mouse
+        # wheel never fights nested scrollers). The Latest page holds only
+        # the panel, which freezes its own header and family tabs above
+        # its rows canvas (see _mount_latest_panel). Below the tabs sits
+        # the fixed Quick Links footer (launch buttons + MANAGE LINKS
+        # editor) - outside every scroll region, so always visible.
         content_wrap = ttk.Frame(main, style="App.TFrame")
         content_wrap.grid(row=4, column=0, sticky="nsew")
         content_wrap.grid_columnconfigure(0, weight=1)
@@ -1058,16 +1057,13 @@ class Navigator(tk.Frame):
         self._page_inner = {}
         self._scroll_map = {}
         for _pname, _plabel in (("folders", "Job Folders"),
-                                ("latest", "Latest Details"),
-                                ("quick", "Quick Links")):
+                                ("latest", "Latest Details")):
             _pg = ttk.Frame(self._sub_nb, style="App.TFrame")
             self._sub_nb.add(_pg, text=_plabel)
             self._page_frames[_pname] = _pg
             if _pname == "latest":
                 self._page_latest = _pg
                 continue
-            if _pname == "quick":
-                self._page_quick = _pg
             _pg.grid_columnconfigure(0, weight=1)
             _pg.grid_rowconfigure(0, weight=1)
             _cv = tk.Canvas(_pg, background="#f5f6f8", highlightthickness=0)
@@ -1085,6 +1081,11 @@ class Navigator(tk.Frame):
             self._page_canvas[_pname] = _cv
             self._page_inner[_pname] = _inner
             self._scroll_map[_inner] = _cv
+        self._quick_footer = ttk.Frame(main, style="App.TFrame")
+        self._quick_footer.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        for _col in range(3):
+            self._quick_footer.grid_columnconfigure(_col, weight=1, uniform="btn")
+        self._quick_footer_built = False
         self._latest_panel = None
         self._links_tree = None
         self._links_notice = ""
@@ -1297,15 +1298,12 @@ class Navigator(tk.Frame):
         self._clear_content()
         page_folders = self._page_inner["folders"]
         page_latest = self._page_frames["latest"]
-        page_quick = self._page_inner["quick"]
         ttk.Label(page_folders, text=text, style="Sub.TLabel",
                   font=("Segoe UI", 11)).grid(row=0, column=0, columnspan=3, pady=(30, 10))
-        # No job selected: the folders page is just the placeholder, quick
-        # links live on their own tab, and the Latest page explains itself
-        # (the panel guides job selection).
-        all_links = get_admin_links() + self.settings.get("links", [])
-        width = max([len(l["name"]) + 3 for l in all_links] + [1]) + 2
-        self._render_quick_page(width)
+        # No job selected: the folders page is just the placeholder, the
+        # Quick Links footer is global (ensured once), and the Latest page
+        # explains itself (the panel guides job selection).
+        self._ensure_quick_footer()
         self._mount_latest_panel(page_latest)
 
     # ---------- main content ----------
@@ -1544,33 +1542,35 @@ class Navigator(tk.Frame):
                 toggle.configure(text="\u25B8")
             row += 1
 
-        all_links = get_admin_links() + self.settings.get("links", [])
-        self._render_quick_page(width)
+        self._ensure_quick_footer()
         self._mount_latest_panel(page_latest)
 
-    def _jump_to_quick(self):
-        """'Quick Links' beside Add to Favorites: flip to the Quick Links
-        sub-tab - launch buttons on top, the link manager below."""
-        try:
-            self._sub_nb.select(self._page_quick)
-        except (tk.TclError, AttributeError):
-            pass
+    def _ensure_quick_footer(self):
+        """Build the fixed Quick Links footer once (launch buttons +
+        MANAGE LINKS editor, below the tabs and outside every scroll
+        region). The footer is global, not per-job, so job switches and
+        the placeholder screen only ensure it exists - repaints happen
+        solely through _refresh_quick_links after a manager edit."""
+        if self._quick_footer_built:
+            return
+        all_links = get_admin_links() + self.settings.get("links", [])
+        width = max([len(l["name"]) + 3 for l in all_links] + [1]) + 2
+        self._render_quick_page(width)
 
     def _render_quick_page(self, width):
-        """Whole Quick Links tab: launch buttons plus the embedded link
-        manager underneath."""
+        """Whole Quick Links block in the fixed footer: launch buttons
+        plus the embedded link manager underneath."""
         self._links_tree = None
         self._link_images = []
-        page_quick = self._page_inner["quick"]
-        self._render_quick_links(page_quick, width, 0)
-        self._render_links_manager(page_quick, 2)
+        self._render_quick_links(self._quick_footer, width, 0)
+        self._render_links_manager(self._quick_footer, 2)
+        self._quick_footer_built = True
 
     def _refresh_quick_links(self, select=None):
-        """Repaint only the Quick Links tab after a manager edit - the Job
-        Folders and Latest pages keep their state, and `select` (a tree
-        iid) restores the edited row's selection in the rebuilt list."""
-        page_quick = self._page_inner["quick"]
-        for w in page_quick.winfo_children():
+        """Repaint only the fixed Quick Links footer after a manager edit
+        - the Job Folders and Latest pages keep their state, and `select`
+        (a tree iid) restores the edited row's selection in the rebuilt list."""
+        for w in self._quick_footer.winfo_children():
             w.destroy()
         all_links = get_admin_links() + self.settings.get("links", [])
         width = max([len(l["name"]) + 3 for l in all_links] + [1]) + 2
@@ -1891,10 +1891,10 @@ class Navigator(tk.Frame):
         return None
 
     def _render_links_manager(self, host, row):
-        """The link manager embedded at the bottom of the Quick Links tab
-        (add/rename/delete/reorder/icons/admin links) - no popup. Every
-        edit repaints only this tab (see _refresh_quick_links) so the
-        edited row stays selected."""
+        """The link manager embedded under the launch buttons in the fixed
+        Quick Links footer (add/rename/delete/reorder/icons/admin links) -
+        no popup. Every edit repaints only the footer (see
+        _refresh_quick_links) so the edited row stays selected."""
         top = self.winfo_toplevel()
         toggle = tk.Label(host, text="\u25BE  MANAGE LINKS",
                           font=("Segoe UI", 9, "bold"),
