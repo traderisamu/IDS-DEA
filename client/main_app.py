@@ -1897,6 +1897,13 @@ class DEAApp(tk.Tk):
                    f"still isn't complete.\n\n{hours_note}\n\nPlease fill in your JOB code, Work "
                    f"Description, Hours and Details - or mark today as Holiday/Leave if it "
                    f"doesn't apply.{pending_note}")
+            if dt.datetime.now().time() >= dt.time(16, 0):
+                # 4:00 PM and 4:30 PM repeats (same popup, no extra box):
+                # end of day, so also nudge the Portal timesheet. Time-gated
+                # instead of repeat-counted, so it stays correct if the
+                # repeat interval is ever reconfigured - the 3:30 repeat
+                # never carries this line.
+                msg += "\n\nAlso: please update your Timesheet in the Portal."
         else:  # "today"
             msg = (f"Hi {self.employee_name}, it looks like your work log for "
                    f"{for_date.isoformat()} isn't complete yet.\n\n{hours_note}\n\nPlease "
