@@ -1049,9 +1049,9 @@ class Navigator(tk.Frame):
         content_wrap = ttk.Frame(main, style="App.TFrame")
         content_wrap.grid(row=4, column=0, sticky="nsew")
         content_wrap.grid_columnconfigure(0, weight=1)
-        content_wrap.grid_rowconfigure(1, weight=1)
+        content_wrap.grid_rowconfigure(0, weight=1)
         self._sub_nb = ttk.Notebook(content_wrap)
-        self._sub_nb.grid(row=0, column=0, sticky="ew")
+        self._sub_nb.grid(row=0, column=0, sticky="nsew")
         self._page_frames = {}
         self._page_canvas = {}
         self._page_inner = {}
