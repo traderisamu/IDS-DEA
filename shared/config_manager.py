@@ -76,8 +76,14 @@ class AppConfig:
 
     def __init__(self):
         self.work_items = []          # list[(description, tooltip)]
-        self.work_item_prefixes = {}  # dict[description -> frozenset(JOB prefixes)], only for restricted items
-        self.work_item_exclusive = set()  # descriptions marked "Exclusive" - see work_items_for_job
+        # Per-row restriction rules, one tuple per work_items row in the
+        # same order: (description, prefixes frozenset|None, exclusive bool).
+        # Rules are deliberately PER ROW, not per description - the sheet
+        # may repeat a description with different JOB scopes (e.g.
+        # "Reading References" once for ENGG and once for AESG), and a
+        # dict keyed by description would let the later row silently
+        # overwrite the earlier row's scopes.
+        self.work_item_rules = []
         self.employees = []           # list[(name, team)]
         self.employee_ids = {}        # dict[name -> Employee ID string], optional column
         self.settings = {}            # dict[str, str]
@@ -195,19 +201,23 @@ class AppConfig:
         prefix = str(job_code or "").strip().split("-")[0].strip().upper()
 
         exclusive_matches = [
-            desc for desc, _tip in self.work_items
-            if desc in self.work_item_exclusive and prefix and prefix in self.work_item_prefixes.get(desc, frozenset())
+            desc for (desc, prefixes, excl) in self.work_item_rules
+            if excl and prefix and prefixes and prefix in prefixes
         ]
         if exclusive_matches:
-            if always_include and always_include not in exclusive_matches:
-                exclusive_matches.append(always_include)
-            return exclusive_matches
+            out = []
+            for d in exclusive_matches:
+                if d not in out:
+                    out.append(d)
+            if always_include and always_include not in out:
+                out.append(always_include)
+            return out
 
         result = []
-        for desc, _tip in self.work_items:
-            allowed = self.work_item_prefixes.get(desc)
-            if not allowed or prefix in allowed or desc == always_include:
-                result.append(desc)
+        for desc, prefixes, _excl in self.work_item_rules:
+            if not prefixes or prefix in prefixes or desc == always_include:
+                if desc not in result:
+                    result.append(desc)
         return result
 
     def employee_id_for(self, employee_name):
@@ -252,12 +262,13 @@ def _read_config_file(path):
         if desc:
             desc = str(desc).strip()
             cfg.work_items.append((desc, str(tip).strip() if tip else ""))
+            prefixes = None
             if prefixes_raw and str(prefixes_raw).strip():
-                prefixes = {p.strip().upper() for p in re.split(r"[,/]", str(prefixes_raw)) if p.strip()}
-                if prefixes:
-                    cfg.work_item_prefixes[desc] = frozenset(prefixes)
-            if str(exclusive_raw or "").strip().lower() in ("yes", "y", "true", "1"):
-                cfg.work_item_exclusive.add(desc)
+                parsed = {p.strip().upper() for p in re.split(r"[,/]", str(prefixes_raw)) if p.strip()}
+                if parsed:
+                    prefixes = frozenset(parsed)
+            exclusive = str(exclusive_raw or "").strip().lower() in ("yes", "y", "true", "1")
+            cfg.work_item_rules.append((desc, prefixes, exclusive))
 
     # Employees
     if "Employees" not in wb.sheetnames:
