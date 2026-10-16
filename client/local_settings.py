@@ -77,7 +77,9 @@ def get_standard_times():
     None. This is a personal display preference only, so it's local to
     this PC/profile rather than synced via the shared drive - on a
     different PC it just shows the default again, which is fine for
-    what this is."""
+    what this is. Lifecycle: wiped on every app startup and whenever a
+    different day is picked (see main_app), so a customization only ever
+    applies to the day it was made on, in that one session."""
     d = load()
     return {
         "time_in": d.get("standard_time_in"),

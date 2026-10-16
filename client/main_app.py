@@ -47,6 +47,12 @@ class DEAApp(tk.Tk):
     def __init__(self):
         super().__init__()
         ensure_autostart()
+        # Standard times always start at the built-in defaults - any
+        # per-PC customization from a previous run is wiped on startup
+        # (and again whenever a different day is picked - see
+        # _refresh_today_tab), so yesterday's custom schedule can never
+        # leak into today.
+        LS.clear_standard_times()
         # Native drag-and-drop for this interpreter (Quick Links / Admin
         # Links / file link generator drop zones). Optional: without the
         # package everything still runs, just without DnD.
@@ -81,6 +87,9 @@ class DEAApp(tk.Tk):
         # can only be reset with admin approval - see _reset_user.)
         self._locked = False
         self._write_heartbeat()
+        # Which date the standard-times reset was last applied for (None
+        # until the first _refresh_today_tab - see below).
+        self._times_date = None
 
         self._build_ui()
         if self.employee_name and not self._locked:
@@ -1435,6 +1444,13 @@ class DEAApp(tk.Tk):
         the_date = self._selected_date()
         if not the_date:
             return
+        if self._times_date != the_date:
+            # A new day is on screen (or the very first load) - drop any
+            # customized standard times so the illustrative schedule and
+            # log-out math start from the built-in defaults again.
+            # Same-day refreshes (add/edit/delete) leave them alone.
+            self._times_date = the_date
+            LS.clear_standard_times()
         self.day_of_week_label.config(text=the_date.strftime("%A"))
         try:
             entries = ds.read_log_entries(self.shared_path, self.employee_name, the_date, the_date)
