@@ -66,6 +66,19 @@ def config_file_path():
     return os.path.join(get_shared_path(), C.CONFIG_FILENAME)
 
 
+def get_flag(key):
+    """Small generic key/value slot for one-off UI state (e.g. 'this
+    warning was already shown for version X'). Kept separate from the
+    named settings above so adding one never changes their shape."""
+    return load().get(key)
+
+
+def set_flag(key, value):
+    data = load()
+    data[key] = value
+    save(data)
+
+
 def get_standard_times():
     """Per-PC override for the Log Today's Work tab's illustrative
     'X start + lunch -> out at Y' schedule (see

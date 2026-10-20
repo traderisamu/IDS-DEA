@@ -20,8 +20,31 @@ try:
 except Exception:
     HAS_DND = False
 
+try:
+    from shared import pathutils
+except Exception:  # standalone copy of this module, outside DEA
+    pathutils = None
+
 APP_NAME = "NaviTool 2.0"
 JOB_ROOT = r"\\EgnyteDrive\idsinc\Shared\Engineering\ENGG PHL\JOBS"
+
+_JOB_ROOT_CACHE = {"path": None, "at": 0.0}
+_JOB_ROOT_TTL_SECONDS = 60.0
+
+
+def job_root():
+    """JOB_ROOT pointed at whichever Egnyte share name actually exists on
+    this PC ('idsinc' or 'idsinc (2)' - see shared/pathutils). Cached
+    briefly: this is read on every job-row render, and probing the aliases
+    of a share that is genuinely missing costs real network timeouts."""
+    now = time.time()
+    cached = _JOB_ROOT_CACHE["path"]
+    if cached and now - _JOB_ROOT_CACHE["at"] < _JOB_ROOT_TTL_SECONDS:
+        return cached
+    path = pathutils.resolve_existing_dir(JOB_ROOT) if pathutils else JOB_ROOT
+    _JOB_ROOT_CACHE["path"] = path
+    _JOB_ROOT_CACHE["at"] = now
+    return path
 
 # Work-stage groups. Each section header is a click-to-collapse toggle.
 # Items are either plain buttons or dropdown (Menubutton) buttons; "{code}"
@@ -262,7 +285,7 @@ def build_job_sections(job_name, progress=None, cancel=None):
         except Exception:
             return False
 
-    base = os.path.join(JOB_ROOT, job_name)
+    base = os.path.join(job_root(), job_name)
     code = parse_job_code(job_name)
     if not code:
         return [("", [{"kind": "button", "label": "Job folder", "icon": "\U0001F4C1",
@@ -513,7 +536,17 @@ def _write_links_json(path, links):
 
 
 DEA_CONFIG = r"\\EgnyteDrive\idsinc\Shared\Engineering\ENGG PHL\REPORTS\16 Manhour Report LEADERBOARD\DEA App\DEA_Config.xlsx"
-SHARED_ADMIN_LINKS = os.path.join(os.path.dirname(DEA_CONFIG), "admin_links.json")
+
+
+def _shared_admin_links_file():
+    """admin_links.json next to the shared DEA_Config.xlsx, on whichever
+    Egnyte share name this PC actually has (see job_root()). Without this,
+    PCs where the share is 'idsinc (2)' silently fall back to the local
+    copy and the admin's edits never reach the team."""
+    folder = os.path.dirname(DEA_CONFIG)
+    if pathutils:
+        folder = pathutils.resolve_existing_dir(folder)
+    return os.path.join(folder, "admin_links.json")
 
 
 # Built-in icon set for quick-link buttons (Segoe MDL2 Assets glyphs,
@@ -699,7 +732,7 @@ def get_admin_links():
     if (_ADMIN_LINKS_CACHE["links"] is not None
             and now - _ADMIN_LINKS_CACHE["at"] < _ADMIN_LINKS_TTL_SECONDS):
         return _ADMIN_LINKS_CACHE["links"]
-    links = _read_links_json(SHARED_ADMIN_LINKS)
+    links = _read_links_json(_shared_admin_links_file())
     if not links:
         links = _read_links_json(_admin_links_file())
     if not links:
@@ -997,7 +1030,7 @@ class Navigator(tk.Frame):
         top.grid_columnconfigure(0, weight=1)
         self.title_var = tk.StringVar(value="Select a job")
         ttk.Label(top, textvariable=self.title_var, style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        self.path_var = tk.StringVar(value=JOB_ROOT)
+        self.path_var = tk.StringVar(value=job_root())
         ttk.Label(top, textvariable=self.path_var, style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(3, 0))
 
         actions = ttk.Frame(main, style="App.TFrame")
@@ -1183,14 +1216,14 @@ class Navigator(tk.Frame):
         # folder shows up as soon as you press this button.
         try:
             names = []
-            with os.scandir(JOB_ROOT) as it:
+            with os.scandir(job_root()) as it:
                 for entry in it:
                     if entry.is_dir():
                         names.append(entry.name)
             self.jobs = sorted(names, key=str.lower)
         except Exception as e:
             self.jobs = []
-            self._show_placeholder("Cannot access JOBS directory.\n\n{}\n\n{}".format(JOB_ROOT, e))
+            self._show_placeholder("Cannot access JOBS directory.\n\n{}\n\n{}".format(job_root(), e))
             return
         alive = set(self.jobs)
         with self._cache_lock:
@@ -1244,7 +1277,7 @@ class Navigator(tk.Frame):
     def _open_job(self, name):
         self.current_job = name
         self.title_var.set(name)
-        self.path_var.set(os.path.join(JOB_ROOT, name))
+        self.path_var.set(os.path.join(job_root(), name))
         self._show_job_async()
         self._add_recent(name)
         self.status_var.set("")
@@ -1341,7 +1374,7 @@ class Navigator(tk.Frame):
 
         def work():
             for name in targets:
-                base = os.path.join(JOB_ROOT, name)
+                base = os.path.join(job_root(), name)
                 if not os.path.isdir(base):
                     continue
                 try:
@@ -1723,12 +1756,12 @@ class Navigator(tk.Frame):
     def open_job_folder(self, rel):
         if not self.current_job:
             return
-        path = os.path.join(JOB_ROOT, self.current_job, rel) if rel else os.path.join(JOB_ROOT, self.current_job)
+        path = os.path.join(job_root(), self.current_job, rel) if rel else os.path.join(job_root(), self.current_job)
         open_target(path)
 
     def open_current_job(self):
         if self.current_job:
-            open_target(os.path.join(JOB_ROOT, self.current_job))
+            open_target(os.path.join(job_root(), self.current_job))
 
     def _add_recent(self, job):
         recent = self.settings.setdefault("recent", [])
@@ -1761,7 +1794,7 @@ class Navigator(tk.Frame):
         favs = self.settings.get("favorites", [])
         if not sel or sel[0] >= len(favs):
             return
-        open_target(os.path.join(JOB_ROOT, favs[sel[0]]))
+        open_target(os.path.join(job_root(), favs[sel[0]]))
 
     def _job_context_menu(self, event):
         idx = self.job_list.nearest(event.y)
@@ -1773,7 +1806,7 @@ class Navigator(tk.Frame):
         self.job_list.selection_set(idx)
         menu = tk.Menu(self, tearoff=0)
         menu.add_command(label="Open in Explorer",
-                         command=lambda: open_target(os.path.join(JOB_ROOT, name)))
+                         command=lambda: open_target(os.path.join(job_root(), name)))
         menu.add_command(label="Open in Navigator", command=lambda: self._open_job(name))
         menu.add_separator()
         menu.add_command(label="Add to Favorites",
@@ -1991,7 +2024,7 @@ class Navigator(tk.Frame):
                 admin_list[idx]["name"], admin_list[idx]["target"] = result
                 admin_list[idx]["type"] = detect_link_type(result[1])
                 try:
-                    _write_links_json(SHARED_ADMIN_LINKS, admin_list)
+                    _write_links_json(_shared_admin_links_file(), admin_list)
                 except Exception as e:
                     messagebox.showerror(APP_NAME, "Could not save admin links:\n{}".format(e),
                                          parent=top)
@@ -2093,7 +2126,7 @@ class Navigator(tk.Frame):
         if not self._check_admin(top):
             return
 
-        path = SHARED_ADMIN_LINKS
+        path = _shared_admin_links_file()
         win = tk.Toplevel(self)
         win.title("NaviTool 2.0 - Admin Quick Links")
         win.geometry("700x450")

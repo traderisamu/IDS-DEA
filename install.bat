@@ -30,10 +30,25 @@ set "FALLBACK_NAME=IDS PH DEA Logger.bat"
 set "VBS_HELPER=%TEMP%\dea_make_shortcut.vbs"
 set "RUN_KEY=HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 
-REM Must match shared\constants.py's DEFAULT_SHARED_PATH - if that's
-REM ever changed for a real rollout, update it here too, or this step
-REM will copy the config to the wrong place (or fail to find it at all).
-set "SHARED_ROOT=\\EgnyteDrive\idsinc\Shared\Engineering\ENGG PHL\REPORTS\16 Manhour Report LEADERBOARD\DEA App"
+REM Must match shared\constants.py's DEFAULT_SHARED_PATH. Egnyte exposes a
+REM share under whatever name is free on that PC, so 'idsinc' can show up
+REM as 'idsinc (2)' and the plain path silently stops resolving. Probe the
+REM likely names and use the first one that really holds the config; fall
+REM back to the plain name so the warnings below still read correctly.
+set "SHARED_REL=Shared\Engineering\ENGG PHL\REPORTS\16 Manhour Report LEADERBOARD\DEA App"
+set "SHARED_ROOT=\\EgnyteDrive\idsinc\%SHARED_REL%"
+if exist "%SHARED_ROOT%\DEA_Config.xlsx" goto :shared_ready
+set "SHARED_ROOT=\\EgnyteDrive\idsinc (2)\%SHARED_REL%"
+if exist "%SHARED_ROOT%\DEA_Config.xlsx" goto :shared_ready
+set "SHARED_ROOT=\\EgnyteDrive\idsinc (3)\%SHARED_REL%"
+if exist "%SHARED_ROOT%\DEA_Config.xlsx" goto :shared_ready
+set "SHARED_ROOT=\\EgnyteDrive\idsinc (4)\%SHARED_REL%"
+if exist "%SHARED_ROOT%\DEA_Config.xlsx" goto :shared_ready
+set "SHARED_ROOT=\\EgnyteDrive\idsinc (5)\%SHARED_REL%"
+if exist "%SHARED_ROOT%\DEA_Config.xlsx" goto :shared_ready
+set "SHARED_ROOT=\\EgnyteDrive\idsinc\%SHARED_REL%"
+:shared_ready
+echo       Shared folder: %SHARED_ROOT%
 set "SRC_CONFIG=%~dp0DEA_Config.xlsx"
 set "DEST_CONFIG=%SHARED_ROOT%\DEA_Config.xlsx"
 

@@ -44,9 +44,13 @@ def open_config_workbook(path):
     matching app update)."""
     try:
         return openpyxl.load_workbook(path, data_only=True, read_only=True)
-    except Exception:
-        if not os.path.isfile(path) or not _looks_encrypted(path):
-            raise
+    except Exception as load_error:
+        if not (os.path.isfile(path) and _looks_encrypted(path)):
+            # Not encrypted, so this is a real open failure (half-synced
+            # file, locked file, corrupt workbook). Raise ConfigError so the
+            # caller falls back to the next location / shows the friendly
+            # dialog instead of dying on a raw openpyxl traceback.
+            raise ConfigError(_describe_unopenable(path, load_error)) from load_error
     try:
         import io
         import msoffcrypto
@@ -240,9 +244,36 @@ class AppConfig:
         return match.group(1) if match else None
 
 
+def _describe_unreachable(path):
+    """Explains WHY the config file could not be read. 'Not found' is the
+    wrong message whenever the folder itself is unreachable or denies
+    access (common when a PC exposes the network share under a different
+    name) - it sends people looking for a file that is actually there."""
+    parent = os.path.dirname(path)
+    try:
+        os.listdir(parent)
+    except FileNotFoundError:
+        return f"Shared folder not found (drive or network path not available):\n{parent}"
+    except PermissionError:
+        return f"Access denied reading the shared folder:\n{parent}"
+    except OSError as e:
+        return f"Shared folder unavailable ({e.strerror or e}):\n{parent}"
+    return f"Config file not found in folder:\n{parent}"
+
+
+def _describe_unopenable(path, error):
+    """The folder and file are both there, but the workbook itself would
+    not open - locked by Excel, or damaged / still syncing from Egnyte."""
+    if isinstance(error, PermissionError):
+        return f"Config file is open or locked by another program:\n{path}"
+    detail = getattr(error, "strerror", None) or str(error) or type(error).__name__
+    return (f"Config file could not be read - it may be damaged or still "
+            f"syncing:\n{path}\n{detail}")
+
+
 def _read_config_file(path):
     if not os.path.isfile(path):
-        raise ConfigError(f"Config file not found:\n{path}")
+        raise ConfigError(_describe_unreachable(path))
 
     wb = open_config_workbook(path)
     cfg = AppConfig()

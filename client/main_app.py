@@ -3,12 +3,13 @@ import sys
 import threading
 import datetime as dt
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, filedialog
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from shared import constants as C
 from shared import config_manager
+from shared import pathutils
 from shared import data_store as ds
 from shared.applog import get_logger
 from client import local_settings as LS
@@ -103,6 +104,7 @@ class DEAApp(tk.Tk):
         UPD.consume_update_notice(self)
         UPD.cleanup_stale_pending()
         UPD.auto_check(self)
+        self._warn_if_running_from_share()
 
         # Always open the main window on launch - manual or auto-started
         # at login. The tray icon keeps running underneath for reminders
@@ -142,20 +144,77 @@ class DEAApp(tk.Tk):
         return candidates
 
     def _resolve_config(self, candidate_delay_seconds=0.5):
+        candidates = self._candidate_config_dirs()
         try:
             cfg, resolved_folder = config_manager.load_config_with_fallback(
-                self._candidate_config_dirs(), C.CONFIG_FILENAME, delay_seconds=candidate_delay_seconds)
-            self.shared_path = resolved_folder
-            LS.set_shared_path(resolved_folder)  # self-heal: fastest candidate next launch
-            self.cfg_mgr = config_manager.ConfigManager(os.path.join(resolved_folder, C.CONFIG_FILENAME))
-            self.cfg = cfg
-        except config_manager.ConfigError as e:
-            log.warning("config resolution failed at startup: %s", e)
-            self.shared_path = LS.get_shared_path()
-            self.cfg_mgr = config_manager.ConfigManager(os.path.join(self.shared_path, C.CONFIG_FILENAME))
-            self.deiconify()
-            messagebox.showerror("Config Error", str(e))
-            self._prompt_shared_path_and_retry()
+                candidates, C.CONFIG_FILENAME, delay_seconds=candidate_delay_seconds)
+        except config_manager.ConfigError as first_error:
+            # Last resort before bothering anyone: some PCs expose the
+            # Egnyte share as "idsinc (2)" (or (3)...) because that name is
+            # already taken by another mount. Only a folder that actually
+            # contains the config file is accepted.
+            resolved_folder = pathutils.find_shared_config(candidates, C.CONFIG_FILENAME)
+            if resolved_folder:
+                log.info("config found via alternate share name: %s", resolved_folder)
+                try:
+                    cfg, resolved_folder = config_manager.load_config_with_fallback(
+                        [resolved_folder], C.CONFIG_FILENAME, attempts=1, delay_seconds=0)
+                except config_manager.ConfigError:
+                    resolved_folder = None
+            if not resolved_folder:
+                log.warning("config resolution failed at startup: %s", first_error)
+                self.shared_path = LS.get_shared_path()
+                self.cfg_mgr = config_manager.ConfigManager(
+                    os.path.join(self.shared_path, C.CONFIG_FILENAME))
+                self.deiconify()
+                messagebox.showerror("Config Error", str(first_error))
+                self._prompt_shared_path_and_retry()
+                return
+        self._apply_resolved_config(cfg, resolved_folder)
+
+    def _apply_resolved_config(self, cfg, folder):
+        self.shared_path = folder
+        LS.set_shared_path(folder)  # self-heal: fastest candidate next launch
+        self.cfg_mgr = config_manager.ConfigManager(os.path.join(folder, C.CONFIG_FILENAME))
+        self.cfg = cfg
+
+    def _running_from_network(self):
+        """True when the running exe lives on a mapped drive or UNC share
+        rather than on this PC's own disk."""
+        if not getattr(sys, "frozen", False) or not sys.platform.startswith("win"):
+            return False
+        exe = sys.executable
+        if pathutils.is_unc_path(exe):
+            return True
+        drive = os.path.splitdrive(exe)[0]
+        if not drive:
+            return False
+        try:
+            import ctypes
+            return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == 4  # DRIVE_REMOTE
+        except Exception:
+            return False
+
+    def _warn_if_running_from_share(self):
+        """The updater swaps the exe sitting next to the running one, so a
+        copy launched straight off the share can never update itself (the
+        share is the update source, and is read-only for most people).
+        Warn once per version instead of leaving that PC silently stale."""
+        if not self._running_from_network():
+            return
+        log.warning("running from a network location: %s", sys.executable)
+        if LS.get_flag("share_run_warned") == C.APP_VERSION:
+            return
+        LS.set_flag("share_run_warned", C.APP_VERSION)
+        self.after(1500, lambda: messagebox.showwarning(
+            "Not Installed On This PC",
+            "This copy is running from the network share, not from an "
+            "installed copy.\n\n"
+            "Auto-update can only replace an installed copy, so this PC "
+            "would stay on the current version.\n\n"
+            "Close the app, run install.bat from the share folder, then "
+            "open the new Desktop shortcut.",
+            parent=self))
 
     def _apply_icon(self):
         try:
@@ -171,26 +230,44 @@ class DEAApp(tk.Tk):
     # First run / setup
     # ------------------------------------------------------------------
     def _prompt_shared_path_and_retry(self):
-        path = simpledialog.askstring(
-            "Shared Folder Location",
-            "Could not find the config file at the default location.\n"
-            "Enter the shared network folder path (the one containing "
-            f"'{C.CONFIG_FILENAME}'):",
-            initialvalue=self.shared_path,
-        )
-        if not path:
-            messagebox.showerror("Setup incomplete", "A valid shared folder is required. Closing.")
-            self.destroy()
-            sys.exit(1)
-        LS.set_shared_path(path)
-        self.shared_path = path
-        self.cfg_mgr = config_manager.ConfigManager(os.path.join(path, C.CONFIG_FILENAME))
-        try:
-            self.cfg = self.cfg_mgr.get(force_refresh=True)
-        except config_manager.ConfigError as e:
-            messagebox.showerror("Config Error", str(e))
-            self.destroy()
-            sys.exit(1)
+        """Folder picker instead of a typed path: the config file lives in
+        a folder whose exact spelling people cannot be expected to
+        remember (and a mistyped UNC path just fails again). Repeats until
+        a folder that really contains the config is chosen."""
+        for _ in range(3):
+            initial = self.shared_path if os.path.isdir(self.shared_path or "") else None
+            path = filedialog.askdirectory(
+                title=f"Select the shared folder that contains {C.CONFIG_FILENAME}",
+                initialdir=initial, mustexist=True)
+            if not path:
+                messagebox.showerror(
+                    "Setup incomplete", "A valid shared folder is required. Closing.")
+                self.destroy()
+                sys.exit(1)
+            path = pathutils.normalize_shared_path(path)
+            if not os.path.isfile(os.path.join(path, C.CONFIG_FILENAME)):
+                messagebox.showwarning(
+                    "Config file not in that folder",
+                    f"No {C.CONFIG_FILENAME} in:\n{path}\n\n"
+                    "Pick the folder that actually contains it - normally "
+                    "the 'DEA App' folder.")
+                continue
+            try:
+                cfg = config_manager.ConfigManager(
+                    os.path.join(path, C.CONFIG_FILENAME)).get(force_refresh=True)
+            except config_manager.ConfigError as e:
+                messagebox.showerror("Config Error", str(e))
+                continue
+            self.shared_path = path
+            self.cfg_mgr = config_manager.ConfigManager(os.path.join(path, C.CONFIG_FILENAME))
+            self.cfg = cfg
+            LS.set_shared_path(path)
+            log.info("shared folder set manually: %s", path)
+            return
+        messagebox.showerror(
+            "Setup incomplete", "No usable shared folder was selected. Closing.")
+        self.destroy()
+        sys.exit(1)
 
     def _first_run_pick_name(self):
         win = tk.Toplevel(self)

@@ -187,6 +187,26 @@ To remove it later, run `uninstall.bat` on that PC.
   `%LOCALAPPDATA%\IDS_DEA_Logger\IDS_DEA_Logger.exe` or pin that file to
   the taskbar manually.
 
+### If one PC says "Config Error" but the file is clearly on the share
+
+Some PCs expose the Egnyte share as `\\EgnyteDrive\idsinc (2)` (or `(3)`,
+`(4)`...) instead of `\\EgnyteDrive\idsinc`, because that name is already
+taken by another Egnyte mount on that machine. Nothing is wrong on the
+share itself - only the name the PC gives it differs. Since v2.6.31 the
+app probes those names automatically for the config file, the job folders,
+the quick links and the update folder, so it just works. If it still asks:
+
+1. Pick the folder in the dialog that appears - normally
+   `...\ENGG PHL\REPORTS\16 Manhour Report LEADERBOARD\DEA App`. The
+   choice is remembered in `%APPDATA%\IDS_DEA_Logger\dea_app_settings.json`,
+   so it is asked once, not every launch. Prefer the `\\EgnyteDrive\...`
+   path over a mapped drive letter: mapped drives often connect a few
+   seconds *after* login, which is exactly when auto-start runs.
+2. Make sure the app is installed, not launched from the share. A copy
+   started from the share cannot auto-update (the updater replaces the
+   exe next to the running one) and now warns about it once per version.
+   Run `install.bat` from the share, then use the Desktop shortcut.
+
 ## 5. Using the app
 
 **Log Today's Work tab** — enter a JOB code and Details. Both fields are

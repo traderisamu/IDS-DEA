@@ -31,6 +31,7 @@ import time
 import tkinter as tk
 
 from shared import constants as C
+from shared import pathutils
 
 PENDING_SUFFIX = ".pending.exe"
 BACKUP_SUFFIX = ".bak"
@@ -71,7 +72,7 @@ def is_newer(current, staged):
 def read_staged_version(dist_folder=None):
     """The staged release tag from the shared folder, or None when there
     is nothing usable to compare against (offline, missing, corrupt)."""
-    folder = dist_folder or C.UPDATE_DIST_FOLDER
+    folder = pathutils.resolve_existing_dir(dist_folder or C.UPDATE_DIST_FOLDER)
     try:
         if not folder or not os.path.isdir(folder):
             return None
@@ -224,7 +225,7 @@ def _try_update(app, dist_folder=None):
             return False, ""
     except tk.TclError:
         return False, ""
-    folder = dist_folder or C.UPDATE_DIST_FOLDER
+    folder = pathutils.resolve_existing_dir(dist_folder or C.UPDATE_DIST_FOLDER)
     staged = read_staged_version(folder)
     if staged is None:
         return False, "Could not reach the shared release folder."
