@@ -181,19 +181,9 @@ class DEAApp(tk.Tk):
     def _running_from_network(self):
         """True when the running exe lives on a mapped drive or UNC share
         rather than on this PC's own disk."""
-        if not getattr(sys, "frozen", False) or not sys.platform.startswith("win"):
+        if not getattr(sys, "frozen", False):
             return False
-        exe = sys.executable
-        if pathutils.is_unc_path(exe):
-            return True
-        drive = os.path.splitdrive(exe)[0]
-        if not drive:
-            return False
-        try:
-            import ctypes
-            return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == 4  # DRIVE_REMOTE
-        except Exception:
-            return False
+        return pathutils.is_network_path(sys.executable)
 
     def _warn_if_running_from_share(self):
         """The updater swaps the exe sitting next to the running one, so a

@@ -187,7 +187,7 @@ def build(out_path=None):
         ("CompanyName", "IDS PH", "Shown in the app title bar / header."),
         ("SharedDataPath",
          r"\\EgnyteDrive\idsinc\Shared\Engineering\ENGG PHL\REPORTS\16 Manhour Report LEADERBOARD\DEA App",
-         "Network folder holding this config file AND the Logs\\ subfolder (one Excel per employee). Edit the app's local pointer in dea_app_settings.json if this ever moves - see README."),
+         "Network folder holding this config file AND the Logs\\ subfolder (one Excel per employee). Edit the app's local pointer in dea_app_settings.json if this ever moves - see README. Note: PCs that mount the Egnyte share as 'idsinc (2)' instead of 'idsinc' are handled automatically by the app, so this stays the plain name."),
         ("ReminderTimes", "09:00,15:00",
          "Comma-separated 24h HH:MM times, earliest first. The EARLIEST time (e.g. 9:00 AM) "
          "checks whether the PREVIOUS work day's log was completed and pops up once if not - "

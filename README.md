@@ -192,9 +192,13 @@ To remove it later, run `uninstall.bat` on that PC.
 Some PCs expose the Egnyte share as `\\EgnyteDrive\idsinc (2)` (or `(3)`,
 `(4)`...) instead of `\\EgnyteDrive\idsinc`, because that name is already
 taken by another Egnyte mount on that machine. Nothing is wrong on the
-share itself - only the name the PC gives it differs. Since v2.6.31 the
-app probes those names automatically for the config file, the job folders,
-the quick links and the update folder, so it just works. If it still asks:
+share itself - only the name the PC gives it differs. Since v2.6.32 the
+app probes those names automatically for the config file, the job folders
+(including the Latest Details tab), quick-link targets, the shared admin
+links and the update folder, so it just works. A copy started from the
+share also no longer registers itself for auto-start or overwrites the
+Desktop shortcut - both keep pointing at the installed copy. If it still
+asks:
 
 1. Pick the folder in the dialog that appears - normally
    `...\ENGG PHL\REPORTS\16 Manhour Report LEADERBOARD\DEA App`. The

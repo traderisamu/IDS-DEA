@@ -11,6 +11,11 @@ current user.
 """
 import sys
 
+try:
+    from shared import pathutils
+except Exception:  # standalone copy of the app modules
+    pathutils = None
+
 APP_NAME = "IDS_DEA_Logger"
 
 
@@ -20,6 +25,13 @@ def ensure_autostart():
 
     if not getattr(sys, "frozen", False):
         return  # running from source (python.exe) - nothing sensible to register
+
+    # A copy launched straight from the share must never become the
+    # auto-start entry: that would pin this PC to the share copy forever
+    # (and it can never auto-update itself from there). Leave whatever
+    # install.bat registered pointing at the local exe alone.
+    if pathutils and pathutils.is_network_path(sys.executable):
+        return
 
     try:
         import winreg

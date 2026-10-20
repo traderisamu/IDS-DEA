@@ -25,6 +25,11 @@ import os
 import sys
 import subprocess
 
+try:
+    from shared import pathutils
+except Exception:  # standalone copy of the app modules
+    pathutils = None
+
 
 def _real_desktop_dir():
     """Redirection-aware Desktop path. Falls back to the plain
@@ -84,6 +89,12 @@ def ensure_desktop_shortcut(app_title="IDS PH DEA Logger"):
         return
     if not getattr(sys, "frozen", False):
         return  # running from source - nothing sensible to shortcut to
+
+    # Never create a Desktop shortcut that points at the share copy: it
+    # would keep launching an exe that cannot auto-update, and install.bat
+    # is the only thing that should define this PC's launch target.
+    if pathutils and pathutils.is_network_path(sys.executable):
+        return
 
     try:
         target_exe = sys.executable

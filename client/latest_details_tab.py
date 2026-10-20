@@ -30,7 +30,7 @@ from tkinter import ttk
 
 from client.navigator_tab import (
     DATA_DIR,
-    JOB_ROOT,
+    job_root,
     open_target,
     parse_job_code,
     load_settings as _nav_load_settings,
@@ -930,7 +930,7 @@ def scan_latest_details(job_name, side, progress=None, cancel=None,
     code = parse_job_code(job_name or "")
     if not code:
         return {}, empty_skipped
-    base = os.path.join(JOB_ROOT, job_name)
+    base = os.path.join(job_root(), job_name)
     if not os.path.isdir(base):
         return {}, empty_skipped
     skipped = {"total": 0, "files": []}
@@ -1477,7 +1477,7 @@ class LatestDetailsTab(ttk.Frame):
         if folder_rel:
             ttk.Button(page, text="Open folder",
                        command=lambda r=folder_rel: open_target(
-                           os.path.join(JOB_ROOT, job, r))).grid(
+                           os.path.join(job_root(), job, r))).grid(
                                row=row_idx, column=2, sticky="nw",
                                padx=8, pady=4)
         else:

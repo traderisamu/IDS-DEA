@@ -7,6 +7,7 @@ address bar or a browser).
 """
 import os
 import re
+import sys
 
 from . import constants as C
 
@@ -98,6 +99,50 @@ def resolve_existing_dir(path, max_alias=5):
     for variant in shared_path_variants(path, max_alias=max_alias):
         try:
             if os.path.isdir(variant):
+                return variant
+        except OSError:
+            continue
+    return path
+
+
+def is_network_path(path):
+    """True when `path` lives on a UNC share or a mapped network drive -
+    i.e. somewhere the exe must not be updated into place, and from where
+    auto-start/shortcuts should never be registered."""
+    if not path:
+        return False
+    p = normalize_shared_path(path)
+    if p.startswith("\\\\"):
+        return True
+    if not sys.platform.startswith("win"):
+        return False
+    drive = os.path.splitdrive(p)[0]
+    if not drive:
+        return False
+    try:
+        import ctypes
+        return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == 4  # DRIVE_REMOTE
+    except Exception:
+        return False
+
+
+def remap_share_path(path, max_alias=5):
+    """`path` with the Egnyte share name swapped for the alias that exists
+    on this PC, when the literal path does not. A link saved as
+    '\\\\EgnyteDrive\\idsinc\\...' still opens on a PC where the share is
+    'idsinc (2)' - without rewriting anything that is stored."""
+    if not path or not path.lower().startswith(_EGNYTE_ROOT + "\\"):
+        return path
+    try:
+        if os.path.exists(path):
+            return path
+    except OSError:
+        pass
+    for variant in shared_path_variants(path, max_alias=max_alias):
+        if variant.lower() == path.lower():
+            continue
+        try:
+            if os.path.exists(variant):
                 return variant
         except OSError:
             continue

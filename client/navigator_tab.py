@@ -822,6 +822,11 @@ def open_target(target):
     t = normalize_path(target)
     if not t:
         return
+    # Links are stored with an absolute share path ('\\EgnyteDrive\idsinc\...')
+    # in the bundled defaults, the shared admin_links.json and local settings.
+    # A PC that mounts the share as 'idsinc (2)' cannot open those verbatim,
+    # so swap in whichever alias is actually present here.
+    t = pathutils.remap_share_path(t) if pathutils else t
     try:
         os.startfile(t)
     except Exception as e:
