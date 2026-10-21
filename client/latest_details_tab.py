@@ -1011,6 +1011,7 @@ class LatestDetailsTab(ttk.Frame):
         self._fam_job = None
         self._fam_show_maps = True
         self._prog_last = 0.0
+        self._live_resize = True
         try:
             self._side = tk.StringVar(
                 value=_nav_load_settings().get("latest_side", SIDES[0]))
@@ -1110,11 +1111,36 @@ class LatestDetailsTab(ttk.Frame):
         self._rows_canvas.grid(row=0, column=0, sticky="nsew")
         rows_vsb.grid(row=0, column=1, sticky="ns")
         self.body.bind("<Configure>",
-                       lambda _e: self._rows_canvas.configure(
-                           scrollregion=self._rows_canvas.bbox("all")))
+                       lambda _e: self._on_body_configure())
         self._rows_canvas.bind("<Configure>",
-                               lambda e: self._rows_canvas.itemconfig(
-                                   self._body_win, width=e.width))
+                               lambda e: self._on_rows_configure(e))
+
+    def set_live_resize(self, enabled):
+        """Called by NaviTool while its sidebar grip is being dragged:
+        the row body re-lays out hundreds of labels, so skip that per
+        frame and catch up in one pass when the drag ends."""
+        self._live_resize = bool(enabled)
+        if enabled:
+            self._on_rows_configure()
+            self._on_body_configure()
+
+    def _on_body_configure(self):
+        if not getattr(self, "_live_resize", True):
+            return
+        try:
+            self._rows_canvas.configure(
+                scrollregion=self._rows_canvas.bbox("all"))
+        except tk.TclError:
+            pass
+
+    def _on_rows_configure(self, event=None):
+        if not getattr(self, "_live_resize", True):
+            return
+        try:
+            width = event.width if event is not None else self._rows_canvas.winfo_width()
+            self._rows_canvas.itemconfig(self._body_win, width=width)
+        except (tk.TclError, AttributeError):
+            pass
 
     def scroll_top(self):
         """Reset the rows scroll (used by NaviTool's Latest Details... button)."""

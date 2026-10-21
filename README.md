@@ -309,9 +309,9 @@ Hours, and Remarks, then **Add Entry**.
   7:30/12-1 default on any other PC. The app's default window size is
   tall enough to show all of this without resizing.
 
-**🟢 NaviTool 2.0 tab** (2nd tab) — three tabs inside: **Job
-Folders** (job folder shortcuts), **Latest Details**, and **Quick
-Links**. Folder menus nest as deep as the drive goes — e.g. BS ›
+**🟢 NaviTool 2.0 tab** (2nd tab) — two tabs inside: **Job
+Folders** (job folder shortcuts) and **Latest Details**; the **Quick
+Links** block sits in a fixed footer under them, always visible. Folder menus nest as deep as the drive goes — e.g. BS ›
 CALCS › BS01, Shop Drawings › For Approval › Seq 01, RFI Sent › Seq,
 CD › Approval Returns › CD#015, SKETCHES › sub › sub — and every level
 stays clickable (each menu is headed by its folder's own name) so you
@@ -319,7 +319,12 @@ can open just BS or BS › CALCS when that's all you want. Opening a
 job for the first time shows a loading row (live phase, Cancel button)
 while its folders are read; cached jobs open instantly. The **Latest
 Details...** button (beside Add to Favorites) jumps to the Latest
-Details tab.
+Details tab. The left sidebar has two drag handles: the vertical strip
+between the sidebar and the content resizes the sidebar (up to 720 px,
+remembered per Windows user), and the small horizontal strip under
+Favorites resizes the favorites box (snapped to whole rows, also
+remembered). Double-click either strip to go back to the default;
+Escape cancels a drag in progress.
 
 **Latest Details** (inside NaviTool) — one tab per connection family
 (BS, MC, VB, …; misc: STAIRS, LADDERS, RAILINGS, GATES, PIPE
