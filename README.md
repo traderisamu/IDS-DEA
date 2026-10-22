@@ -541,28 +541,33 @@ Admin Dashboard has:
   Versions come from tiny heartbeat files each app writes to
   `Logs\.versions\` at startup - don't delete that folder. Anyone showing
   `--` or amber after a rollout is who still needs the new installer.
-- **View Employee PINs...** — a read-only lookup of every employee's
-  current PIN, so you don't have to go hunt through the spreadsheet to
-  answer "what's so-and-so's PIN" or "why isn't the app locking for
-  them". There's nothing to set or clear from the Admin Dashboard: a
-  PIN is just the trailing number of that person's **Employee ID** in
-  the `Employees` sheet of `DEA_Config.xlsx` (e.g. Employee ID
-  `06-2010-526` -> PIN `526`). **To set, change, or remove someone's
-  PIN, edit their Employee ID in that sheet directly** and hit
-  **Refresh Config** (or restart the app) - there is no other way to
-  do it, on purpose: employees have no self-service PIN option, and
-  neither does the dashboard. Leaving the Employee ID blank for
-  someone means the app simply never locks for them.
-- **Cutoff Summary...** — same dialog described in section 5, with an
-  employee picker added so an admin can view or export anyone's
-  payroll-cutoff summary directly, without switching PCs or being
-  signed in as them.
+- **Usage Stats...** — who is actually using the app, and for what. Two
+  sources: lightweight counters each launch writes to `Logs\.usage\`
+  (screen visits and meaningful actions only - never the text you type,
+  capped at 12 months), and the logged entries themselves. Tabs:
+  **Screens & Actions** (default "Who (by feature)" view groups each
+  feature by the people who used it; also plain Totals with a Top user
+  column, and a per-employee matrix), **People** (uses, screen views,
+  actions, most-used feature, PC(s), days active, last active - the
+  quickest way to spot who never opens the app), and **Work Mix** (hours
+  and share by Work Description and by JOB code, with configured work
+  items that were never used flagged). Pick a range (this month, last
+  30/90 days, or custom) and export the current tab to `.xlsx`/`.csv`.
+  Counters flush every 5 minutes and on exit, so a fresh session can take
+  a few minutes to appear; set `UsageTrackingEnabled=No` in App Settings
+  to turn the counters off.
 - **Efficiency Dashboard...** — the same breakdown-by-Work-Description /
   breakdown-by-JOB-code / per-unit-efficiency view as My Dashboard (see
   section 5), but with an employee picker AND a free-form "From" / "To"
   date range (type any `YYYY-MM-DD` dates, or use one of the Quick
   Range buttons) instead of a fixed period list - for checking any
   custom stretch of time on demand, not just this/last month.
+- **Layout note** — the dashboard buttons sit in a compact two-row,
+  left-aligned toolbar under the title. PINs are no longer listed here:
+  a PIN is just the trailing number of that person's Employee ID in the
+  `Employees` sheet of `DEA_Config.xlsx` (edit that sheet, then
+  **Refresh Config**). Cutoff Summary remains available to each employee
+  on their own Log tab (section 5).
 
 ## 7. Editing the dropdown lists / roster / settings
 

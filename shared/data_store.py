@@ -287,6 +287,8 @@ def read_usage(shared_path, start_date=None, end_date=None):
     Returns:
         {"features":   {key: total_uses},
          "by_employee":{employee: {key: uses}},
+         "employees":  {employee: {"total", "screens", "actions", "pcs",
+                                   "days", "last", "top", "by_feature"}},
          "by_day":     {iso_day: total_uses},
          "days":       [iso_day, ...] sorted,
          "pc_count":   n,
@@ -298,7 +300,7 @@ def read_usage(shared_path, start_date=None, end_date=None):
     check_shared_reachable(shared_path)
     start_s = start_date.isoformat() if isinstance(start_date, dt.date) else (str(start_date) if start_date else "")
     end_s = end_date.isoformat() if isinstance(end_date, dt.date) else (str(end_date) if end_date else "")
-    out = {"features": {}, "by_employee": {}, "by_day": {},
+    out = {"features": {}, "by_employee": {}, "employees": {}, "by_day": {},
            "days": [], "pc_count": 0, "skipped": 0}
     days_seen = set()
     pcs = set()
@@ -317,8 +319,15 @@ def read_usage(shared_path, start_date=None, end_date=None):
             base = os.path.splitext(os.path.basename(path))[0]
             parts = base.split("_")
             employee = parts[-1] if len(parts) >= 3 else base
-        pcs.add(str(data.get("pc") or ""))
+        pc = str(data.get("pc") or "").strip()
+        if pc:
+            pcs.add(pc)
         emp = out["by_employee"].setdefault(employee, {})
+        who = out["employees"].setdefault(employee, {
+            "total": 0, "screens": 0, "actions": 0, "pcs": set(),
+            "days": set(), "last": "", "top": "", "by_feature": {}})
+        if pc:
+            who["pcs"].add(pc)
         for day, counts in data.get("days", {}).items():
             day = str(day)
             if start_s and day < start_s:
@@ -338,6 +347,20 @@ def read_usage(shared_path, start_date=None, end_date=None):
                 emp[key] = emp.get(key, 0) + n
                 out["by_day"][day] = out["by_day"].get(day, 0) + n
                 days_seen.add(day)
+                who["by_feature"][key] = who["by_feature"].get(key, 0) + n
+                who["total"] += n
+                if str(key).startswith("tab:"):
+                    who["screens"] += n
+                else:
+                    who["actions"] += n
+                who["days"].add(day)
+                if day > who["last"]:
+                    who["last"] = day
+    for who in out["employees"].values():
+        who["pcs"] = sorted(who["pcs"])
+        who["days"] = len(who["days"])
+        if who["by_feature"]:
+            who["top"] = max(who["by_feature"], key=who["by_feature"].get)
     out["days"] = sorted(days_seen)
     out["pc_count"] = len(pcs)
     return out

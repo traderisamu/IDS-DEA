@@ -126,17 +126,18 @@ def open_usage_stats(parent, cfg, shared_path):
 
     use_bar = ttk.Frame(tab_use)
     use_bar.pack(fill="x", pady=(0, 4))
-    mode_var = tk.StringVar(value="Totals")
+    mode_var = tk.StringVar(value="Who (by feature)")
     ttk.Label(use_bar, text="View:").pack(side="left")
     mode_combo = ttk.Combobox(use_bar, textvariable=mode_var, state="readonly",
-                              values=["Totals", "By employee"], width=14)
+                              values=["Who (by feature)", "Totals", "By employee"],
+                              width=18)
     mode_combo.pack(side="left", padx=(4, 12))
     use_label = ttk.Label(use_bar, text="", font=("Arial", 8), foreground="#555")
     use_label.pack(side="left")
 
     use_frame = ttk.Frame(tab_use)
     use_frame.pack(fill="both", expand=True)
-    use_tree = ttk.Treeview(use_frame, show="headings", height=16)
+    use_tree = ttk.Treeview(use_frame, show="tree headings", height=16)
     use_vsb = ttk.Scrollbar(use_frame, orient="vertical", command=use_tree.yview)
     use_hsb = ttk.Scrollbar(use_frame, orient="horizontal", command=use_tree.xview)
     use_tree.configure(yscrollcommand=use_vsb.set, xscrollcommand=use_hsb.set)
@@ -145,6 +146,34 @@ def open_usage_stats(parent, cfg, shared_path):
     use_hsb.grid(row=1, column=0, sticky="ew")
     use_frame.grid_rowconfigure(0, weight=1)
     use_frame.grid_columnconfigure(0, weight=1)
+    use_tree.tag_configure("group", font=("Arial", 9, "bold"))
+
+    # ---------------- People ----------------
+    tab_people = ttk.Frame(nb, padding=6)
+    nb.add(tab_people, text="People")
+
+    people_bar = ttk.Frame(tab_people)
+    people_bar.pack(fill="x", pady=(0, 4))
+    people_label = ttk.Label(people_bar, text="", font=("Arial", 8),
+                             foreground="#555")
+    people_label.pack(side="left")
+    ttk.Label(people_bar, text="(screens + actions recorded per person)",
+              font=("Arial", 8), foreground="#888").pack(side="right")
+
+    people_frame = ttk.Frame(tab_people)
+    people_frame.pack(fill="both", expand=True)
+    people_tree = ttk.Treeview(people_frame, show="headings", height=16)
+    people_vsb = ttk.Scrollbar(people_frame, orient="vertical",
+                               command=people_tree.yview)
+    people_hsb = ttk.Scrollbar(people_frame, orient="horizontal",
+                               command=people_tree.xview)
+    people_tree.configure(yscrollcommand=people_vsb.set,
+                          xscrollcommand=people_hsb.set)
+    people_tree.grid(row=0, column=0, sticky="nsew")
+    people_vsb.grid(row=0, column=1, sticky="ns")
+    people_hsb.grid(row=1, column=0, sticky="ew")
+    people_frame.grid_rowconfigure(0, weight=1)
+    people_frame.grid_columnconfigure(0, weight=1)
 
     # ---------------- Work Mix ----------------
     tab_mix = ttk.Frame(nb, padding=6)
@@ -249,6 +278,7 @@ def open_usage_stats(parent, cfg, shared_path):
                 state["usage"] = out.get("usage")
                 state["mix"] = out.get("mix")
                 paint_usage()
+                paint_people()
                 paint_mix()
         except queue.Empty:
             pass
@@ -262,47 +292,130 @@ def open_usage_stats(parent, cfg, shared_path):
             use_label.config(text="")
             return
         features = data["features"]
+        employees = data.get("employees", {})
         total = sum(features.values())
         use_label.config(
             text=f"{total:,} uses  \u2022  {len(features)} features  \u2022  "
+                 f"{len(employees)} people  \u2022  "
                  f"{data['pc_count']} PC(s)  \u2022  {len(data['days'])} day(s)"
                  + (f"  \u2022  {data['skipped']} unreadable file(s)"
                     if data["skipped"] else ""))
         order = {k: i for i, k in enumerate(usage_mod.TAB_ORDER)}
         keys = sorted(features, key=lambda k: (order.get(k, 99),
                                                -features[k], k.lower()))
-        if mode_var.get() == "By employee":
-            employees = sorted(data["by_employee"])
-            columns = ["feature"] + employees
-            use_tree.configure(columns=columns)
+        mode = mode_var.get()
+        if mode == "Who (by feature)":
+            # Parent = feature, children = the people who used it, so
+            # "who is using what" is answerable at a glance.
+            use_tree.configure(show="tree headings",
+                               columns=("uses", "people", "share"))
+            use_tree.heading("#0", text="Feature  /  who used it")
+            use_tree.column("#0", width=430, anchor="w", stretch=True)
+            for col, label, width, anchor in (
+                    ("uses", "Uses", 80, "e"),
+                    ("people", "People", 70, "e"),
+                    ("share", "Share", 70, "e")):
+                use_tree.heading(col, text=label)
+                use_tree.column(col, width=width, anchor=anchor, stretch=False)
+            for key in keys:
+                n = features[key]
+                users = sorted(
+                    ((emp, info["by_feature"].get(key, 0), info.get("pcs") or [])
+                     for emp, info in employees.items()
+                     if info["by_feature"].get(key)),
+                    key=lambda t: (-t[1], t[0].lower()))
+                share = (n / total * 100.0) if total else 0.0
+                parent = use_tree.insert(
+                    "", "end", text=usage_mod.label_for(key), open=False,
+                    tags=("group",),
+                    values=(f"{n:,}", f"{len(users)}",
+                            f"{share:.1f}%"))
+                for emp, count, pcs in users:
+                    use_tree.insert(
+                        parent, "end", text=emp,
+                        values=(f"{count:,}", ", ".join(pcs) or "", ""))
+            # most-used first, then leave the rest collapsed
+            if use_tree.get_children():
+                use_tree.item(use_tree.get_children()[0], open=True)
+        elif mode == "By employee":
+            columns = ["feature"] + sorted(employees)
+            use_tree.configure(show="headings", columns=columns)
             use_tree.heading("feature", text="Feature")
             use_tree.column("feature", width=260, anchor="w", stretch=False)
-            for emp in employees:
+            for emp in sorted(employees):
                 use_tree.heading(emp, text=emp)
                 use_tree.column(emp, width=max(80, min(160, len(emp) * 8)),
                                 anchor="e", stretch=False)
             for key in keys:
                 row = [usage_mod.label_for(key)]
-                for emp in employees:
-                    n = data["by_employee"][emp].get(key, 0)
+                for emp in sorted(employees):
+                    n = data["by_employee"].get(emp, {}).get(key, 0)
                     row.append(f"{n:,}" if n else "")
                 use_tree.insert("", "end", values=row)
         else:
-            use_tree.configure(columns=("feature", "uses", "share"))
+            use_tree.configure(show="headings",
+                               columns=("feature", "uses", "people", "top",
+                                        "share"))
             for col, label, width, anchor in (
-                    ("feature", "Feature", 420, "w"),
-                    ("uses", "Uses", 90, "e"),
-                    ("share", "Share", 80, "e")):
+                    ("feature", "Feature", 360, "w"),
+                    ("uses", "Uses", 80, "e"),
+                    ("people", "People", 70, "e"),
+                    ("top", "Top user", 190, "w"),
+                    ("share", "Share", 70, "e")):
                 use_tree.heading(col, text=label)
                 use_tree.column(col, width=width, anchor=anchor,
                                 stretch=(col == "feature"))
             for key in keys:
                 n = features[key]
+                users = [(emp, info["by_feature"][key])
+                         for emp, info in employees.items()
+                         if info["by_feature"].get(key)]
+                users.sort(key=lambda t: -t[1])
+                top = f"{users[0][0]} ({users[0][1]:,})" if users else ""
                 share = (n / total * 100.0) if total else 0.0
                 use_tree.insert("", "end", values=(
-                    usage_mod.label_for(key), f"{n:,}", f"{share:.1f}%"))
+                    usage_mod.label_for(key), f"{n:,}", f"{len(users)}",
+                    top, f"{share:.1f}%"))
         if not keys:
+            use_tree.configure(show="headings", columns=("feature",))
+            use_tree.heading("feature", text="Feature")
             use_tree.insert("", "end", values=("No usage recorded in this range.",))
+
+    def paint_people():
+        for item in people_tree.get_children():
+            people_tree.delete(item)
+        data = state["usage"]
+        if not data:
+            people_label.config(text="")
+            return
+        employees = data.get("employees", {})
+        cols = (("name", "Employee", 190, "w"),
+                ("total", "Total uses", 85, "e"),
+                ("screens", "Screen views", 95, "e"),
+                ("actions", "Actions", 75, "e"),
+                ("top", "Most-used feature", 300, "w"),
+                ("pcs", "PC(s)", 150, "w"),
+                ("days", "Days", 55, "e"),
+                ("last", "Last active", 90, "center"))
+        people_tree.configure(columns=[c[0] for c in cols])
+        for col, label, width, anchor in cols:
+            people_tree.heading(col, text=label)
+            people_tree.column(col, width=width, anchor=anchor,
+                               stretch=(col == "top"))
+        people_label.config(
+            text=f"{len(employees)} people  \u2022  "
+                 f"{sum(i['total'] for i in employees.values()):,} uses")
+        rows = sorted(employees.items(), key=lambda kv: (-kv[1]["total"],
+                                                         kv[0].lower()))
+        for name, info in rows:
+            people_tree.insert("", "end", values=(
+                name, f"{info['total']:,}", f"{info['screens']:,}",
+                f"{info['actions']:,}",
+                usage_mod.label_for(info["top"]) if info["top"] else "",
+                ", ".join(info["pcs"]) or "", info["days"],
+                info["last"] or ""))
+        if not rows:
+            people_tree.insert("", "end", values=("No usage recorded in this range.",))
 
     def paint_mix():
         for item in work_tree.get_children():
@@ -344,20 +457,55 @@ def open_usage_stats(parent, cfg, shared_path):
                 messagebox.showinfo("Nothing to Export", "No usage data in this range.",
                                     parent=win)
                 return
-            if mode_var.get() == "By employee":
-                employees = sorted(data["by_employee"])
-                headers = ["Feature"] + employees
+            mode = mode_var.get()
+            employees = data.get("employees", {})
+            if mode == "By employee":
+                headers = ["Feature"] + sorted(employees)
                 rows = []
                 for key in sorted(data["features"], key=lambda k: -data["features"][k]):
                     rows.append([usage_mod.label_for(key)] +
-                                [data["by_employee"][e].get(key, 0) for e in employees])
+                                [data["by_employee"].get(e, {}).get(key, 0)
+                                 for e in sorted(employees)])
+            elif mode == "Who (by feature)":
+                headers = ["Feature", "Employee", "Uses", "PC(s)"]
+                rows = []
+                for key in sorted(data["features"], key=lambda k: -data["features"][k]):
+                    users = sorted(
+                        ((emp, info["by_feature"][key], info.get("pcs") or [])
+                         for emp, info in employees.items()
+                         if info["by_feature"].get(key)),
+                        key=lambda t: (-t[1], t[0].lower()))
+                    for emp, n, pcs in users:
+                        rows.append([usage_mod.label_for(key), emp, n,
+                                     ", ".join(pcs)])
             else:
-                headers = ["Feature", "Uses", "Share %"]
+                headers = ["Feature", "Uses", "People", "Top user", "Share %"]
                 total = sum(data["features"].values()) or 1
-                rows = [[usage_mod.label_for(k), n, round(n / total * 100.0, 1)]
-                        for k, n in sorted(data["features"].items(),
-                                           key=lambda kv: -kv[1])]
+                rows = []
+                for k, n in sorted(data["features"].items(), key=lambda kv: -kv[1]):
+                    users = [(emp, info["by_feature"][k])
+                             for emp, info in employees.items()
+                             if info["by_feature"].get(k)]
+                    users.sort(key=lambda t: -t[1])
+                    rows.append([usage_mod.label_for(k), n, len(users),
+                                 "%s (%d)" % users[0] if users else "",
+                                 round(n / total * 100.0, 1)])
             default = "Usage_Stats_Screens_%s_%s" % (state["start"], state["end"])
+        elif tab == 1:
+            data = state["usage"]
+            employees = (data or {}).get("employees", {})
+            if not employees:
+                messagebox.showinfo("Nothing to Export", "No usage data in this range.",
+                                    parent=win)
+                return
+            headers = ["Employee", "Total uses", "Screen views", "Actions",
+                       "Most-used feature", "PC(s)", "Days active", "Last active"]
+            rows = [[name, info["total"], info["screens"], info["actions"],
+                     usage_mod.label_for(info["top"]) if info["top"] else "",
+                     ", ".join(info["pcs"]), info["days"], info["last"]]
+                    for name, info in sorted(employees.items(),
+                                             key=lambda kv: -kv[1]["total"])]
+            default = "Usage_Stats_People_%s_%s" % (state["start"], state["end"])
         else:
             data = state["mix"]
             if not data:

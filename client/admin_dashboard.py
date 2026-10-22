@@ -11,7 +11,6 @@ from shared import data_store as ds
 from shared import config_manager
 from shared import constants as C
 from client.calendar_widget import COLOR_MAP, legend_frame
-from client.cutoff_summary_dialog import open_cutoff_summary
 from client.admin_efficiency_dialog import open_admin_efficiency
 from client.usage_stats_dialog import open_usage_stats
 
@@ -107,19 +106,28 @@ class AdminDashboard(tk.Toplevel):
         self._refresh_grid()
 
     def _build_ui(self):
-        top = ttk.Frame(self, padding=10)
-        top.pack(fill="x")
-        ttk.Label(top, text="Admin Dashboard", font=("Arial", 15, "bold")).pack(side="left")
-        ttk.Label(top, text=f"v{C.APP_VERSION}", font=("Arial", 8), foreground="#888").pack(side="left", padx=(6, 0))
-        ttk.Button(top, text="Open Database Folder (Logs)", command=self._open_db_folder).pack(side="right")
-        ttk.Button(top, text="Open Config File", command=self._open_config_file).pack(side="right", padx=6)
-        ttk.Button(top, text="Refresh Config", command=self._refresh_config).pack(side="right", padx=6)
-        ttk.Button(top, text="Export Month...", command=self._export_month).pack(side="right", padx=6)
-        ttk.Button(top, text="Rankings...", command=self._show_rankings).pack(side="right", padx=6)
-        ttk.Button(top, text="Efficiency Dashboard...", command=self._open_efficiency_dashboard).pack(side="right", padx=6)
-        ttk.Button(top, text="Cutoff Summary...", command=self._open_cutoff_summary).pack(side="right", padx=6)
-        ttk.Button(top, text="Usage Stats...", command=self._open_usage_stats).pack(side="right", padx=6)
-        ttk.Button(top, text="View Employee PINs...", command=self._view_employee_pins).pack(side="right", padx=6)
+        head = ttk.Frame(self, padding=(10, 10, 10, 0))
+        head.pack(fill="x")
+        ttk.Label(head, text="Admin Dashboard", font=("Arial", 15, "bold")).pack(side="left")
+        ttk.Label(head, text=f"v{C.APP_VERSION}", font=("Arial", 8), foreground="#888").pack(side="left", padx=(6, 0))
+
+        # Two compact left-aligned rows instead of one long right-aligned
+        # row: the old layout spread the buttons across the whole window
+        # width, which looked stretched and was hard to scan.
+        tools = ttk.Frame(self, padding=(8, 6, 8, 0))
+        tools.pack(fill="x")
+        buttons = [
+            ("Refresh Config", self._refresh_config),
+            ("Export Month...", self._export_month),
+            ("Rankings...", self._show_rankings),
+            ("Efficiency Dashboard...", self._open_efficiency_dashboard),
+            ("Usage Stats...", self._open_usage_stats),
+            ("Open Config File", self._open_config_file),
+            ("Open Database Folder (Logs)", self._open_db_folder),
+        ]
+        for i, (text, command) in enumerate(buttons):
+            ttk.Button(tools, text=text, command=command).grid(
+                row=i // 4, column=i % 4, sticky="w", padx=(0, 6), pady=2)
 
         nb = ttk.Frame(self)
         nb.pack(fill="both", expand=True, padx=8, pady=8)
@@ -342,55 +350,6 @@ class AdminDashboard(tk.Toplevel):
             )
         else:
             messagebox.showinfo("Refreshed", summary)
-
-    def _view_employee_pins(self):
-        """Read-only lookup of what each employee's current PIN actually
-        is. There's nothing to 'set' or 'clear' here anymore - a PIN is
-        just the trailing number of that person's Employee ID in the
-        Employees sheet of DEA_Config.xlsx (config_manager.pin_for), so
-        the only way to change, add, or remove someone's PIN is to edit
-        that column directly in Excel. This window is just a convenience
-        so an admin doesn't have to go hunt through the spreadsheet to
-        answer "what's so-and-so's PIN" or "why isn't the app locking
-        for them"."""
-        win = tk.Toplevel(self)
-        win.title("Employee PINs")
-        win.geometry("380x460")
-        win.transient(self)
-
-        ttk.Label(win, text="Employee PINs", font=("Arial", 13, "bold")).pack(pady=(14, 4))
-        ttk.Label(
-            win, text="A PIN is just the trailing number of the employee's ID in the "
-                      "Employees sheet - there's no separate PIN storage. To set, change, "
-                      "or remove someone's PIN, edit their Employee ID in DEA_Config.xlsx "
-                      "and Refresh Config. Blank means the app won't lock for them.",
-            font=("Arial", 9), wraplength=340, justify="left"
-        ).pack(padx=16, pady=(0, 8))
-
-        list_frame = ttk.Frame(win)
-        list_frame.pack(fill="both", expand=True, padx=16, pady=(0, 10))
-        cols = ("name", "pin")
-        tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=14)
-        tree.heading("name", text="Employee")
-        tree.heading("pin", text="PIN")
-        tree.column("name", width=230, anchor="w")
-        tree.column("pin", width=80, anchor="center")
-        tree.pack(side="left", fill="both", expand=True)
-        scroll = ttk.Scrollbar(list_frame, orient="vertical", command=tree.yview)
-        scroll.pack(side="right", fill="y")
-        tree.configure(yscrollcommand=scroll.set)
-
-        for name, _team in sorted(self.cfg.employees):
-            tree.insert("", "end", values=(name, self.cfg.pin_for(name) or "(none)"))
-
-        ttk.Button(win, text="Close", command=win.destroy).pack(pady=(0, 12))
-
-    def _open_cutoff_summary(self):
-        """Same Cutoff Summary dialog employees can open on themselves,
-        but with an employee picker added (self.cfg.employees) so an
-        admin can pull anyone's payroll-period summary without needing
-        to be signed in as them."""
-        open_cutoff_summary(self, self.cfg, self.shared_path, None, employee_list=self.cfg.employees)
 
     def _open_efficiency_dashboard(self):
         """Same efficiency view as each employee's own My Dashboard tab,
