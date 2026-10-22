@@ -1097,7 +1097,7 @@ class Navigator(tk.Frame):
         self.job_list.bind("<Double-Button-1>", lambda e: self.open_current_job())
         self.job_list.bind("<Button-3>", self._job_context_menu)
 
-        ttk.Button(sidebar, text="\u21bb Refresh Jobs", command=self.refresh_jobs).pack(fill="x", pady=(10, 5))
+        ttk.Button(sidebar, text="\u21bb Refresh Jobs", command=lambda: self.refresh_jobs(record=True)).pack(fill="x", pady=(10, 5))
 
         main = ttk.Frame(self, style="App.TFrame", padding=(22, 18))
         main.grid(row=0, column=2, sticky="nsew")
@@ -1544,8 +1544,9 @@ class Navigator(tk.Frame):
             self.job_search.insert(0, "Search jobs...")
             self.job_search.configure(foreground="#7a828a")
 
-    def refresh_jobs(self):
-        _record("action:nav_refresh")
+    def refresh_jobs(self, record=False):
+        if record:  # the Refresh Jobs button, not the first-visit scan
+            _record("action:nav_refresh")
         # NOTE: the section cache is deliberately NOT wiped here. A full
         # wipe made every post-refresh click re-scan the network share
         # (the main click-lag complaint). Only entries for jobs that no

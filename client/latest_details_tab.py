@@ -1169,7 +1169,8 @@ class LatestDetailsTab(ttk.Frame):
             self._message("Pick a job in NaviTool 2.0 first - this panel follows "
                           "whatever job is selected there.")
             return
-        _record("action:latest_scan")
+        if force:  # the Scan button; passive follow-the-job refreshes don't count
+            _record("action:latest_scan")
         self._last_job, self._last_side = job, side
         self.job_label.config(text="{}  \u2022  {}".format(job, SIDE_LABELS[side]))
         cached = None if force else get_cached_latest(job, side)
