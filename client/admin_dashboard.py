@@ -13,6 +13,7 @@ from shared import constants as C
 from client.calendar_widget import COLOR_MAP, legend_frame
 from client.cutoff_summary_dialog import open_cutoff_summary
 from client.admin_efficiency_dialog import open_admin_efficiency
+from client.usage_stats_dialog import open_usage_stats
 
 
 def require_admin_approval(parent, cfg_mgr, on_approved, message=None):
@@ -117,6 +118,7 @@ class AdminDashboard(tk.Toplevel):
         ttk.Button(top, text="Rankings...", command=self._show_rankings).pack(side="right", padx=6)
         ttk.Button(top, text="Efficiency Dashboard...", command=self._open_efficiency_dashboard).pack(side="right", padx=6)
         ttk.Button(top, text="Cutoff Summary...", command=self._open_cutoff_summary).pack(side="right", padx=6)
+        ttk.Button(top, text="Usage Stats...", command=self._open_usage_stats).pack(side="right", padx=6)
         ttk.Button(top, text="View Employee PINs...", command=self._view_employee_pins).pack(side="right", padx=6)
 
         nb = ttk.Frame(self)
@@ -306,6 +308,15 @@ class AdminDashboard(tk.Toplevel):
         self._refresh_grid()
         if self.parent is not None and hasattr(self.parent, "refresh_config_and_ui"):
             self.parent.refresh_config_and_ui()
+        # Retention sweep for the usage counters (12 months), off the UI
+        # thread since it reads/writes files on the share.
+        try:
+            import threading
+            threading.Thread(
+                target=lambda: ds.prune_usage(self.shared_path, 12),
+                daemon=True).start()
+        except Exception:
+            pass
 
         warnings = []
         if not self.cfg.employees:
@@ -387,6 +398,11 @@ class AdminDashboard(tk.Toplevel):
         of a fixed period list - for an admin checking an arbitrary
         custom stretch of time."""
         open_admin_efficiency(self, self.cfg, self.shared_path)
+
+    def _open_usage_stats(self):
+        """Which screens/actions get used (counters from shared/usage.py)
+        and where the logged hours actually went."""
+        open_usage_stats(self, self.cfg, self.shared_path)
 
     def _open_employee_workbook(self, name):
         """Opens one individual's Logs workbook (<SharedPath>\\Logs\\<name>.xlsx)

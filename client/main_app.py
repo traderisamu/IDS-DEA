@@ -11,6 +11,7 @@ from shared import constants as C
 from shared import config_manager
 from shared import pathutils
 from shared import data_store as ds
+from shared import usage
 from shared.applog import get_logger
 from client import local_settings as LS
 from client.calendar_widget import MonthCalendar, legend_frame
@@ -88,6 +89,14 @@ class DEAApp(tk.Tk):
         # can only be reset with admin approval - see _reset_user.)
         self._locked = False
         self._write_heartbeat()
+        # Feature-usage counters (screens + actions, never typed content).
+        # Configured once the share/employee are known; the recorder is a
+        # no-op until then and flushes on a background thread.
+        try:
+            usage.configure(self.shared_path, self.employee_name,
+                            enabled=self.cfg.usage_tracking_enabled())
+        except Exception:
+            log.exception("usage telemetry setup failed")
         # Which date the standard-times reset was last applied for (None
         # until the first _refresh_today_tab - see below).
         self._times_date = None
@@ -396,6 +405,7 @@ class DEAApp(tk.Tk):
     def _manual_update_check(self):
         """Tray item / header button: on-demand update check with the
         result shown in the status bar (silent path stays silent)."""
+        usage.record("action:update_check")
         try:
             message = UPD.manual_check(self)
         except Exception:
@@ -469,6 +479,10 @@ class DEAApp(tk.Tk):
     def _stop_helpers(self):
         """Stop the hotkey listener and tray icon, never letting a
         misbehaving one trap process teardown (joins time out)."""
+        try:
+            usage.shutdown()  # flush pending usage counters before exit
+        except Exception:
+            pass
         if self.hotkey is not None:
             try:
                 self.hotkey.stop()
@@ -884,6 +898,7 @@ class DEAApp(tk.Tk):
                 messagebox.showerror("File Locked", str(e), parent=win)
                 return
             win.destroy()
+            usage.record("action:day_status")
             self._refresh_today_tab()
 
         ttk.Button(win, text="Save", command=confirm).pack(pady=14)
@@ -964,6 +979,7 @@ class DEAApp(tk.Tk):
         except ds.FileLockedError as e:
             messagebox.showerror("File Locked", str(e))
             return
+        usage.record("action:add_entry")
 
         max_warn = self.cfg.max_hours_warning()
         if new_total > max_warn:
@@ -1158,6 +1174,7 @@ class DEAApp(tk.Tk):
             win.destroy()
             self._refresh_suggestions()
             self._refresh_today_tab()
+            usage.record("action:edit_entry")
 
         btn_row = ttk.Frame(form)
         btn_row.grid(row=5, column=0, columnspan=2, pady=(14, 0))
@@ -1254,6 +1271,7 @@ class DEAApp(tk.Tk):
             messagebox.showerror("File Locked", str(e))
             return
         self._refresh_today_tab()
+        usage.record("action:delete_entry")
         if the_date and len(values) == 5:
             self._show_undo_bar(the_date, *values)
 
@@ -1285,6 +1303,7 @@ class DEAApp(tk.Tk):
             messagebox.showerror("File Locked", str(e))
             return
         self._hide_undo_bar()
+        usage.record("action:undo_delete")
         self.date_var.set(the_date.isoformat())
         self._refresh_suggestions()
         self._refresh_today_tab()
@@ -1699,6 +1718,7 @@ class DEAApp(tk.Tk):
             from client.link_generator_tab import LinkGeneratorFrame
             self._linkgen_frame_obj = LinkGeneratorFrame(self.overview_linkgen_wrap)
             self._linkgen_frame_obj.pack(fill="x")
+            usage.record("action:linkgen_open")  # built once per session
             self._dashboard_tab_obj = PersonalDashboardTab(self.overview_dash_wrap, self)
             self._dashboard_tab_obj.pack(fill="x")
             self._dashboard_tab_obj.refresh()
@@ -1712,14 +1732,28 @@ class DEAApp(tk.Tk):
         # Green title text while the NaviTool 2.0 tab is current (see
         # _paint_navigator_tab) - cleared on every other tab.
         self._paint_navigator_tab(self.notebook.select() == str(self.tab_navigator))
+        # Feature-usage counter: which screen is being viewed (counters
+        # only - nothing about the content is recorded).
+        try:
+            _sel = self.notebook.select()
+            if _sel == str(self.tab_today):
+                usage.record("tab:log")
+            elif _sel == str(self.tab_navigator):
+                usage.record("tab:navitool")
+            elif _sel == str(self.tab_overview):
+                usage.record("tab:dashboard")
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Admin
     # ------------------------------------------------------------------
     def _open_admin(self):
+        usage.record("action:admin_open")
         open_admin_login(self, self.cfg_mgr, self.shared_path)
 
     def _open_cutoff_summary(self):
+        usage.record("action:cutoff_summary")
         open_cutoff_summary(self, self.cfg, self.shared_path, self.employee_name)
 
     def refresh_config_and_ui(self):

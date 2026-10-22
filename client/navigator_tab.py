@@ -25,6 +25,19 @@ try:
 except Exception:  # standalone copy of this module, outside DEA
     pathutils = None
 
+try:
+    from shared import usage
+except Exception:  # standalone copy of this module, outside DEA
+    usage = None
+
+
+def _record(key):
+    try:
+        if usage is not None:
+            usage.record(key)
+    except Exception:
+        pass
+
 APP_NAME = "NaviTool 2.0"
 JOB_ROOT = r"\\EgnyteDrive\idsinc\Shared\Engineering\ENGG PHL\JOBS"
 
@@ -834,7 +847,7 @@ def normalize_path(path):
     return path
 
 
-def open_target(target):
+def open_target(target, record=True):
     t = normalize_path(target)
     if not t:
         return
@@ -843,6 +856,8 @@ def open_target(target):
     # A PC that mounts the share as 'idsinc (2)' cannot open those verbatim,
     # so swap in whichever alias is actually present here.
     t = pathutils.remap_share_path(t) if pathutils else t
+    if record:  # callers that log a more specific action pass False
+        _record("action:open_link")
     try:
         os.startfile(t)
     except Exception as e:
@@ -1530,6 +1545,7 @@ class Navigator(tk.Frame):
             self.job_search.configure(foreground="#7a828a")
 
     def refresh_jobs(self):
+        _record("action:nav_refresh")
         # NOTE: the section cache is deliberately NOT wiped here. A full
         # wipe made every post-refresh click re-scan the network share
         # (the main click-lag complaint). Only entries for jobs that no
@@ -2085,7 +2101,8 @@ class Navigator(tk.Frame):
 
     def open_current_job(self):
         if self.current_job:
-            open_target(os.path.join(job_root(), self.current_job))
+            _record("action:nav_open_job")
+            open_target(os.path.join(job_root(), self.current_job), record=False)
 
     def _add_recent(self, job):
         recent = self.settings.setdefault("recent", [])
@@ -2188,6 +2205,7 @@ class Navigator(tk.Frame):
             APP_NAME,
             "Added '{}' to Favorites (shown in the sidebar).".format(self.current_job),
             parent=self.winfo_toplevel())
+        _record("action:nav_favorite")
 
     def _check_admin(self, parent):
         """Admin username/password gate. Returns True on success - used

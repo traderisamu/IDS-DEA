@@ -160,6 +160,12 @@ class AppConfig:
         val = str(self.settings.get("WeekendsCountAsWorkday", "No")).strip().lower()
         return val in ("yes", "y", "true", "1")
 
+    def usage_tracking_enabled(self):
+        """Feature-usage counters are on by default; an admin can turn
+        them off with UsageTrackingEnabled=No in App Settings."""
+        val = str(self.settings.get("UsageTrackingEnabled", "Yes")).strip().lower()
+        return val not in ("no", "n", "false", "0", "off")
+
     def team_of(self, employee_name):
         for name, team in self.employees:
             if name == employee_name:

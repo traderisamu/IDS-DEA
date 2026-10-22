@@ -38,6 +38,19 @@ from client.navigator_tab import (
 )
 from shared.applog import get_logger
 
+try:
+    from shared import usage
+except Exception:  # standalone copy of this module, outside DEA
+    usage = None
+
+
+def _record(key):
+    try:
+        if usage is not None:
+            usage.record(key)
+    except Exception:
+        pass
+
 _log = get_logger(__name__)
 
 SIDES = ("STRUCTURAL", "MISC")
@@ -1156,6 +1169,7 @@ class LatestDetailsTab(ttk.Frame):
             self._message("Pick a job in NaviTool 2.0 first - this panel follows "
                           "whatever job is selected there.")
             return
+        _record("action:latest_scan")
         self._last_job, self._last_side = job, side
         self.job_label.config(text="{}  \u2022  {}".format(job, SIDE_LABELS[side]))
         cached = None if force else get_cached_latest(job, side)
@@ -1477,8 +1491,7 @@ class LatestDetailsTab(ttk.Frame):
         self._link_cell(page, row_idx, 1, paths, job)
         if folder_rel:
             ttk.Button(page, text="Open folder",
-                       command=lambda r=folder_rel: open_target(
-                           os.path.join(job_root(), job, r))).grid(
+                       command=lambda r=folder_rel, j=job: self._open_folder(j, r)).grid(
                                row=row_idx, column=2, sticky="nw",
                                padx=8, pady=4)
         else:
@@ -1486,6 +1499,10 @@ class LatestDetailsTab(ttk.Frame):
                          foreground="#9aa0a6").grid(row=row_idx, column=2,
                                                     sticky="w", padx=8)
         return row_idx + 1
+
+    def _open_folder(self, job, rel):
+        _record("action:latest_open_folder")
+        open_target(os.path.join(job_root(), job, rel), record=False)
 
     def _link_cell(self, parent, row, col, paths, job):
         if self._ebg is None:

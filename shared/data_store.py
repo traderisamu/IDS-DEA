@@ -254,6 +254,142 @@ def ensure_logs_folder(shared_path):
     return folder
 
 
+# ----------------------- Feature-usage telemetry ---------------------------
+#
+# Written by shared/usage.py (one small JSON per PC per employee, merged
+# counters only - never anything a user typed). Everything here is
+# read-only for the Admin Dashboard's "Usage Stats..." dialog, plus the
+# retention sweep. Kept next to the log workbooks but in a dot-folder so
+# it doesn't clutter the Logs listing.
+
+USAGE_SUBFOLDER = ".usage"
+
+
+def usage_folder(shared_path):
+    return os.path.join(logs_folder(shared_path), USAGE_SUBFOLDER)
+
+
+def usage_file_paths(shared_path):
+    """Every usage_*.json on the share ([] when the folder doesn't exist)."""
+    folder = usage_folder(shared_path)
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    return [os.path.join(folder, n) for n in names
+            if n.lower().startswith("usage_") and n.lower().endswith(".json")]
+
+
+def read_usage(shared_path, start_date=None, end_date=None):
+    """Aggregate the per-PC counters over [start_date, end_date] (inclusive,
+    either may be None for 'no bound').
+
+    Returns:
+        {"features":   {key: total_uses},
+         "by_employee":{employee: {key: uses}},
+         "by_day":     {iso_day: total_uses},
+         "days":       [iso_day, ...] sorted,
+         "pc_count":   n,
+         "skipped":    n}   # unreadable/corrupt files
+
+    Raises DriveUnreachableError only when the share root itself is gone;
+    a missing .usage folder or unreadable file is simply no data.
+    """
+    check_shared_reachable(shared_path)
+    start_s = start_date.isoformat() if isinstance(start_date, dt.date) else (str(start_date) if start_date else "")
+    end_s = end_date.isoformat() if isinstance(end_date, dt.date) else (str(end_date) if end_date else "")
+    out = {"features": {}, "by_employee": {}, "by_day": {},
+           "days": [], "pc_count": 0, "skipped": 0}
+    days_seen = set()
+    pcs = set()
+    for path in usage_file_paths(shared_path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict) or not isinstance(data.get("days"), dict):
+                out["skipped"] += 1
+                continue
+        except (OSError, ValueError):
+            out["skipped"] += 1
+            continue
+        employee = str(data.get("employee") or "").strip()
+        if not employee:
+            base = os.path.splitext(os.path.basename(path))[0]
+            parts = base.split("_")
+            employee = parts[-1] if len(parts) >= 3 else base
+        pcs.add(str(data.get("pc") or ""))
+        emp = out["by_employee"].setdefault(employee, {})
+        for day, counts in data.get("days", {}).items():
+            day = str(day)
+            if start_s and day < start_s:
+                continue
+            if end_s and day > end_s:
+                continue
+            if not isinstance(counts, dict):
+                continue
+            for key, n in counts.items():
+                try:
+                    n = int(n)
+                except (TypeError, ValueError):
+                    continue
+                if n <= 0:
+                    continue
+                out["features"][key] = out["features"].get(key, 0) + n
+                emp[key] = emp.get(key, 0) + n
+                out["by_day"][day] = out["by_day"].get(day, 0) + n
+                days_seen.add(day)
+    out["days"] = sorted(days_seen)
+    out["pc_count"] = len(pcs)
+    return out
+
+
+def prune_usage(shared_path, months=12):
+    """Drop day buckets older than `months` from every usage file.
+    Returns the number of files rewritten. Best-effort per file: a locked
+    or corrupt file is left alone rather than aborting the sweep."""
+    cutoff = _months_ago(dt.date.today(), months).isoformat()
+    rewritten = 0
+    fresh_after = dt.datetime.now().timestamp() - 600
+    for path in usage_file_paths(shared_path):
+        try:
+            # Don't race a live app's flush: leave files touched in the
+            # last 10 minutes for the next sweep.
+            if os.path.getmtime(path) > fresh_after:
+                continue
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            days = data.get("days")
+            if not isinstance(days, dict):
+                continue
+            stale = [d for d in days if str(d) < cutoff]
+            if not stale:
+                continue
+            for d in stale:
+                del days[d]
+            data["updated_at"] = dt.datetime.now().isoformat(timespec="seconds")
+
+            def save(tmp_path, payload=data):
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, sort_keys=True)
+
+            _atomic_write(save, path)
+            rewritten += 1
+        except (OSError, ValueError, FileLockedError):
+            continue
+    return rewritten
+
+
+def _months_ago(day, months):
+    month_index = day.year * 12 + (day.month - 1) - months
+    year, month = divmod(month_index, 12)
+    month += 1
+    try:
+        return dt.date(year, month, day.day)
+    except ValueError:
+        return dt.date(year, month, 28)
+
+
+
 def _new_workbook():
     wb = openpyxl.Workbook()
     ws_log = wb.active
@@ -734,6 +870,58 @@ def employee_total_hours(shared_path, employee_name, start_date, end_date):
     """Total hours logged in [start_date, end_date]."""
     entries = read_log_entries(shared_path, employee_name, start_date, end_date)
     return sum(float(e["hours"] or 0) for e in entries)
+
+
+def activity_mix(shared_path, employees, start_date, end_date, work_items=None):
+    """What the logged hours actually consisted of over a period.
+
+    employees: [(name, team), ...] or [name, ...] (team becomes "").
+    work_items: optional list of configured work-description strings (e.g.
+        [desc for desc, _tip in cfg.work_items]); they are returned
+        verbatim so the UI can flag ones with zero hours in the period
+        ("never used") instead of leaving them silently absent.
+
+    Returns:
+        {"employees": [{"name", "team", "total_hours", "entries",
+                        "by_work": {...}, "by_job": {...}}, ...],
+         "by_work":  {work_description: hours},
+         "by_job":   {job_code: hours},
+         "total_hours": float, "entries": int,
+         "work_items": [configured descriptions, sorted case-insensitively]}
+    """
+    names = []
+    for item in employees or []:
+        if isinstance(item, (list, tuple)):
+            name, team = (item[0], item[1] if len(item) > 1 else "")
+        else:
+            name, team = item, ""
+        if name:
+            names.append((str(name), str(team or "")))
+
+    result = {"employees": [], "by_work": {}, "by_job": {},
+              "total_hours": 0.0, "entries": 0,
+              "work_items": sorted({str(d) for d in (work_items or [])}, key=str.lower)}
+
+    for name, team in names:
+        entries = read_log_entries(shared_path, name, start_date, end_date)
+        by_work, by_job = {}, {}
+        total = 0.0
+        for e in entries:
+            hours = float(e["hours"] or 0)
+            total += hours
+            wd = e["work_description"] or "(unspecified)"
+            job = e["job"] or "(unspecified)"
+            by_work[wd] = by_work.get(wd, 0.0) + hours
+            by_job[job] = by_job.get(job, 0.0) + hours
+            result["by_work"][wd] = result["by_work"].get(wd, 0.0) + hours
+            result["by_job"][job] = result["by_job"].get(job, 0.0) + hours
+        result["employees"].append({
+            "name": name, "team": team, "total_hours": total,
+            "entries": len(entries), "by_work": by_work, "by_job": by_job,
+        })
+        result["total_hours"] += total
+        result["entries"] += len(entries)
+    return result
 
 
 WORK_DESC_CALC_CREATION = "Create Calculation Template"
