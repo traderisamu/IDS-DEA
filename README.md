@@ -320,11 +320,13 @@ job for the first time shows a loading row (live phase, Cancel button)
 while its folders are read; cached jobs open instantly. The **Latest
 Details...** button (beside Add to Favorites) jumps to the Latest
 Details tab. The left sidebar has two drag handles: the vertical strip
-between the sidebar and the content resizes the sidebar (up to 720 px,
-remembered per Windows user), and the small horizontal strip under
-Favorites resizes the favorites box (snapped to whole rows, also
-remembered). Double-click either strip to go back to the default;
-Escape cancels a drag in progress.
+between the sidebar and the content resizes the sidebar, and the small
+horizontal strip under Favorites resizes the favorites box (snapped to
+whole rows). While dragging, a single guide line shows where the edge
+will land - the layout resizes once, on release, so the drag never
+stutters. Both sizes are remembered per Windows user and clamp to the
+window so the content can never be squeezed off-screen. Double-click
+either strip to go back to the default; Escape cancels a drag.
 
 **Latest Details** (inside NaviTool) — one tab per connection family
 (BS, MC, VB, …; misc: STAIRS, LADDERS, RAILINGS, GATES, PIPE

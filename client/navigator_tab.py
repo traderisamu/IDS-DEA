@@ -980,15 +980,14 @@ class Navigator(tk.Frame):
         self._sidebar_manual = False
         self._grip_start_x = 0
         self._grip_start_w = 265
-        self._drag_x = None
         self._drag_width = 265
-        self._drag_after = None
+        self._drag_guide = None
         self._grip_active = False
         self._fav_grip_active = False
-        self._fav_drag_after = None
         self._fav_start_rows = FAV_DEFAULT_ROWS
+        self._fav_rows_target = FAV_DEFAULT_ROWS
         self._fav_row_px = 19.0
-        self._resizing = False
+        self._fav_guide_y0 = 300
         try:
             _saved = int((self.settings or {}).get("sidebar_width") or 0)
         except (TypeError, ValueError):
@@ -996,6 +995,9 @@ class Navigator(tk.Frame):
         if SIDEBAR_MIN_W <= _saved <= SIDEBAR_MAX_W:
             sidebar.configure(width=_saved)
             self._sidebar_manual = True
+            self._sidebar_pref = _saved
+        else:
+            self._sidebar_pref = None
         grip = tk.Frame(self, bg=GRIP_BG, cursor="sb_h_double_arrow", width=8)
         grip.grid(row=0, column=1, sticky="ns")
         grip.grid_propagate(False)
@@ -1006,15 +1008,14 @@ class Navigator(tk.Frame):
         grip.bind("<Enter>", lambda _e: grip.configure(bg=GRIP_HOVER))
         grip.bind("<Leave>", lambda _e: grip.configure(bg=GRIP_BG))
         self._sidebar_grip = grip
-        # Safety net: with the grip's local grab, a release that lands
-        # outside this tab still ends the drag; Escape puts the old width
-        # back. Bind on the toplevel (bindtags don't bubble through
-        # embedded frames) and no-op unless a drag is in progress.
+        # Safety net: the grip takes a local grab, so a release anywhere
+        # inside the app still ends the drag; Escape cancels it. Both are
+        # no-ops unless a drag is actually in progress.
         top = self.winfo_toplevel()
         top.bind("<ButtonRelease-1>", self._sidebar_grip_release, add="+")
         top.bind("<ButtonRelease-1>", self._fav_grip_release, add="+")
         top.bind("<Escape>", self._cancel_grip_drags, add="+")
-        self.bind("<Configure>", self._clamp_sidebar_to_window, add="+")
+        top.bind("<Configure>", self._clamp_sidebar_to_window, add="+")
 
         ttk.Label(sidebar, text="NAVITOOL 2.0", style="Sidebar.TLabel",
                   font=("Segoe UI", 14, "bold")).pack(anchor="w", pady=(0, 18))
@@ -1202,38 +1203,64 @@ class Navigator(tk.Frame):
             texts = list(self.job_list.get(0, "end")) + \
                 list(self.fav_list.get(0, "end"))
             widest = max([font.measure(t) for t in texts if t] + [0])
-            width = min(max(widest + 28 + 14, 220), SIDEBAR_MAX_W)
+            width = min(max(widest + 28 + 14, 220),
+                        SIDEBAR_MAX_W, self._sidebar_max_width())
             self._sidebar.configure(width=width)
         except Exception:
             pass
 
     # ------------------------- splitter plumbing -------------------------
+    def _window_width(self):
+        """The real window width. Deliberately NOT this frame's width: when
+        the sidebar is dragged past the space available, Tk's pack/grid can
+        hand this frame its inflated *requested* width (the sidebar visibly
+        runs off the edge and the content gets squeezed to nothing). The
+        toplevel always knows the true window size."""
+        try:
+            return int(self.winfo_toplevel().winfo_width())
+        except tk.TclError:
+            return 1000
+
     def _sidebar_max_width(self):
         """Widest the sidebar can get without starving the main content:
         the absolute cap, or the window width minus a usable content
         column, whichever is smaller."""
-        try:
-            avail = int(self.winfo_width())
-        except tk.TclError:
-            avail = 1000
-        return max(SIDEBAR_MIN_W, min(SIDEBAR_MAX_W, avail - MAIN_MIN_W))
+        return max(SIDEBAR_MIN_W,
+                   min(SIDEBAR_MAX_W, self._window_width() - MAIN_MIN_W))
 
-    def _set_live_resize(self, enabled):
-        """Suppress the expensive inner re-layouts while a grip is being
-        dragged, then do exactly one layout pass when the drag ends.
-        Resizing the sidebar reflows the 3-column folder grid and the
-        Latest Details row canvas; doing that on every motion event was
-        the drag lag."""
-        self._resizing = not enabled
-        panel = getattr(self, "_latest_panel", None)
-        if panel is not None and hasattr(panel, "set_live_resize"):
+    # While a grip is dragged only a thin guide line moves - no widget
+    # resizes, so nothing re-lays out and there is nothing to lag. The new
+    # size is applied once, on release, clamped to the real window width.
+    def _guide(self):
+        if self._drag_guide is None:
+            self._drag_guide = tk.Frame(self, bg=GRIP_HOVER, bd=0,
+                                        highlightthickness=0)
+        return self._drag_guide
+
+    def _show_vguide(self, x):
+        g = self._guide()
+        try:
+            g.configure(width=2, height=2)
+            g.place(x=max(0, int(x)), y=0, relheight=1.0)
+            g.lift()
+        except tk.TclError:
+            pass
+
+    def _show_hguide(self, y):
+        g = self._guide()
+        try:
+            g.configure(width=2, height=2)
+            g.place(x=0, y=max(0, int(y)), relwidth=1.0)
+            g.lift()
+        except tk.TclError:
+            pass
+
+    def _hide_guide(self):
+        if self._drag_guide is not None:
             try:
-                panel.set_live_resize(enabled)
-            except Exception:
+                self._drag_guide.place_forget()
+            except tk.TclError:
                 pass
-        if enabled:
-            for cv in getattr(self, "_page_canvas", {}).values():
-                self._fit_canvas_width(cv)
 
     def _sidebar_grip_press(self, event):
         self._grip_start_x = event.x_root
@@ -1241,117 +1268,88 @@ class Navigator(tk.Frame):
             self._grip_start_w = int(self._sidebar.cget("width")) or 265
         except (tk.TclError, TypeError, ValueError):
             self._grip_start_w = 265
-        self._drag_x = event.x_root
         self._drag_width = self._grip_start_w
         self._grip_active = True
         self._sidebar_manual = True
-        self._set_live_resize(False)
         try:
             self._sidebar_grip.grab_set()
         except tk.TclError:
             pass
-        try:
-            self.configure(cursor="sb_h_double_arrow")
-        except tk.TclError:
-            pass
+        self._show_vguide(self._grip_start_w)
         return "break"
 
     def _sidebar_grip_drag(self, event):
         if not self._grip_active:
             return "break"
-        self._drag_x = event.x_root
-        if self._drag_after is None:
-            self._drag_after = self.after(DRAG_INTERVAL_MS, self._flush_sidebar_drag)
+        if not (getattr(event, "state", 0x0100) & 0x0100):
+            # Release landed outside the app (no event reached us): the
+            # button is no longer down, so finish instead of staying stuck.
+            return self._sidebar_grip_release()
+        w = self._grip_start_w + (event.x_root - self._grip_start_x)
+        self._drag_width = int(min(max(w, SIDEBAR_MIN_W),
+                                   self._sidebar_max_width()))
+        self._show_vguide(self._drag_width)
         return "break"
-
-    def _flush_sidebar_drag(self):
-        """One coalesced resize per frame: apply the newest pointer
-        position, skip no-op widths, and never touch the inner layout
-        while the drag is live."""
-        self._drag_after = None
-        if not self._grip_active or self._drag_x is None:
-            return
-        w = self._grip_start_w + (self._drag_x - self._grip_start_x)
-        w = int(min(max(w, SIDEBAR_MIN_W), self._sidebar_max_width()))
-        if w == self._drag_width:
-            return
-        self._drag_width = w
-        try:
-            self._sidebar.configure(width=w)
-        except tk.TclError:
-            pass
 
     def _sidebar_grip_release(self, _event=None):
         if not self._grip_active:
             return
-        if self._drag_after is not None:
-            try:
-                self.after_cancel(self._drag_after)
-            except tk.TclError:
-                pass
-            self._drag_after = None
-        self._flush_sidebar_drag()
-        self._end_grip_drag(save=True)
+        self._grip_active = False
+        self._hide_guide()
+        try:
+            self._sidebar_grip.grab_release()
+        except tk.TclError:
+            pass
+        try:
+            self._sidebar.configure(width=self._drag_width)
+        except tk.TclError:
+            pass
+        self._sidebar_pref = self._drag_width
+        try:
+            self.settings["sidebar_width"] = self._drag_width
+            save_settings(self.settings)
+        except Exception:
+            pass
         return "break"
 
     def _sidebar_grip_reset(self, _event=None):
         """Double-click the grip: forget the manual width and go back to
         content-fitting."""
-        self._end_grip_drag(save=False)
+        self._cancel_grip_drags()
         try:
             self.settings.pop("sidebar_width", None)
             save_settings(self.settings)
         except Exception:
             pass
         self._sidebar_manual = False
+        self._sidebar_pref = None
         self._fit_sidebar_width()
         return "break"
 
-    def _end_grip_drag(self, save):
-        """Tear down an in-flight sidebar drag without applying a new
-        width (used by Escape and by the double-click reset, whose own
-        release must not re-save the width it just cleared)."""
-        if self._drag_after is not None:
-            try:
-                self.after_cancel(self._drag_after)
-            except tk.TclError:
-                pass
-            self._drag_after = None
-        self._grip_active = False
-        try:
-            self._sidebar_grip.grab_release()
-        except tk.TclError:
-            pass
-        try:
-            self.configure(cursor="")
-        except tk.TclError:
-            pass
-        self._set_live_resize(True)
-        if save:
-            try:
-                self.settings["sidebar_width"] = int(self._sidebar.cget("width"))
-                save_settings(self.settings)
-            except (tk.TclError, TypeError, ValueError):
-                pass
-
     def _clamp_sidebar_to_window(self, event=None):
-        """Shrinking the window shouldn't leave the main content with no
-        room. Clamps what's displayed without overwriting the saved
-        preference, so growing the window gives the width back."""
-        if event is not None and getattr(event, "widget", None) is not self:
+        """Fit the sidebar to the window: shrinking clamps it so the main
+        content never disappears, and growing gives a manual width back.
+        The saved preference is left untouched either way."""
+        top = self.winfo_toplevel()
+        if event is not None and getattr(event, "widget", None) is not top:
             return
-        if not getattr(self, "_sidebar_manual", False):
+        if getattr(self, "_grip_active", False):
             return
         try:
             cur = int(self._sidebar.cget("width"))
         except (tk.TclError, TypeError, ValueError):
             return
         limit = self._sidebar_max_width()
-        if cur > limit:
-            try:
-                self._sidebar.configure(width=limit)
-            except tk.TclError:
-                pass
+        pref = getattr(self, "_sidebar_pref", None)
+        target = limit if pref is None else min(pref, limit)
+        if cur == target:
+            return
+        if cur < target and pref is None:
+            return  # auto-fit mode: only ever clamped, never widened
+        try:
+            self._sidebar.configure(width=target)
+        except tk.TclError:
+            pass
 
     # ---------------------- favorites height grip ----------------------
     def _fav_rows(self):
@@ -1375,89 +1373,58 @@ class Navigator(tk.Frame):
     def _fav_grip_press(self, event):
         self._fav_grip_start_y = event.y_root
         self._fav_start_rows = self._fav_rows()
-        self._fav_rows_now = self._fav_start_rows
         self._fav_rows_target = self._fav_start_rows
         self._fav_grip_active = True
         rows = max(1, self._fav_start_rows)
         try:
             self._fav_row_px = max(1.0, self.fav_list.winfo_height() / rows)
+            self._fav_guide_y0 = (self.fav_list.winfo_rooty() - self.winfo_rooty()
+                                  + self.fav_list.winfo_height())
         except tk.TclError:
             self._fav_row_px = 19.0
+            self._fav_guide_y0 = 300
         try:
             self._fav_grip.grab_set()
         except tk.TclError:
             pass
-        try:
-            self.configure(cursor="sb_v_double_arrow")
-        except tk.TclError:
-            pass
+        self._show_hguide(self._fav_guide_y0)
         return "break"
 
     def _fav_grip_drag(self, event):
         if not self._fav_grip_active:
             return "break"
+        if not (getattr(event, "state", 0x0100) & 0x0100):
+            return self._fav_grip_release()
         dy = event.y_root - self._fav_grip_start_y
         rows = self._fav_start_rows + int(round(dy / max(1.0, self._fav_row_px)))
         rows = max(FAV_MIN_ROWS, min(rows, self._fav_max_rows()))
         self._fav_rows_target = rows
-        if self._fav_drag_after is None:
-            self._fav_drag_after = self.after(DRAG_INTERVAL_MS, self._flush_fav_drag)
+        y = self._fav_guide_y0 + (rows - self._fav_start_rows) * self._fav_row_px
+        self._show_hguide(y)
         return "break"
-
-    def _flush_fav_drag(self):
-        self._fav_drag_after = None
-        if not self._fav_grip_active:
-            return
-        if self._fav_rows_target == self._fav_rows_now:
-            return
-        self._fav_rows_now = self._fav_rows_target
-        try:
-            self.fav_list.configure(height=self._fav_rows_now)
-        except tk.TclError:
-            pass
 
     def _fav_grip_release(self, _event=None):
         if not self._fav_grip_active:
             return
-        if self._fav_drag_after is not None:
-            try:
-                self.after_cancel(self._fav_drag_after)
-            except tk.TclError:
-                pass
-            self._fav_drag_after = None
-        self._flush_fav_drag()
         self._fav_grip_active = False
+        self._hide_guide()
         try:
             self._fav_grip.grab_release()
         except tk.TclError:
             pass
         try:
-            self.configure(cursor="")
+            self.fav_list.configure(height=self._fav_rows_target)
         except tk.TclError:
             pass
         try:
-            self.settings["favorites_height"] = self._fav_rows()
+            self.settings["favorites_height"] = self._fav_rows_target
             save_settings(self.settings)
         except Exception:
             pass
         return "break"
 
     def _fav_grip_reset(self, _event=None):
-        if self._fav_drag_after is not None:
-            try:
-                self.after_cancel(self._fav_drag_after)
-            except tk.TclError:
-                pass
-            self._fav_drag_after = None
-        self._fav_grip_active = False
-        try:
-            self._fav_grip.grab_release()
-        except tk.TclError:
-            pass
-        try:
-            self.configure(cursor="")
-        except tk.TclError:
-            pass
+        self._cancel_grip_drags()
         try:
             self.settings.pop("favorites_height", None)
             save_settings(self.settings)
@@ -1475,39 +1442,22 @@ class Navigator(tk.Frame):
         if not was_dragging:
             return
         if self._grip_active:
+            self._grip_active = False
             try:
-                self._sidebar.configure(width=self._grip_start_w)
+                self._sidebar_grip.grab_release()
             except tk.TclError:
                 pass
-            self._end_grip_drag(save=False)
         if self._fav_grip_active:
-            if self._fav_drag_after is not None:
-                try:
-                    self.after_cancel(self._fav_drag_after)
-                except tk.TclError:
-                    pass
-                self._fav_drag_after = None
             self._fav_grip_active = False
-            try:
-                self.fav_list.configure(height=self._fav_start_rows)
-            except tk.TclError:
-                pass
             try:
                 self._fav_grip.grab_release()
             except tk.TclError:
                 pass
-        try:
-            self.configure(cursor="")
-        except tk.TclError:
-            pass
+        self._hide_guide()
         return "break"
-
     def _fit_canvas_width(self, canvas):
         """Keep a page canvas's inner frame as wide as the canvas so the
-        3-column button grid always fills the visible width. Skipped
-        mid-drag - one pass runs when the drag ends."""
-        if getattr(self, "_resizing", False):
-            return
+        3-column button grid always fills the visible width."""
         try:
             width = canvas.winfo_width()
             for item in canvas.find_all():
