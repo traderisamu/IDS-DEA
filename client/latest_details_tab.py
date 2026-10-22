@@ -1051,20 +1051,21 @@ class LatestDetailsTab(ttk.Frame):
                             command=self._on_side_changed).pack(side="left", padx=4)
 
         hint = self._tlabel(self, padding=(10, 2, 10, 0), font=("Segoe UI", 8),
-                                foreground="#68727d", justify="left",
+                                foreground="#68727d", justify="left", wraplength=520,
                          text="Newest issued detail + map per connection for the job "
                               "selected in NaviTool 2.0 - one tab per family, maps "
                               "in their own rows. Click a file name to open the PDF.")
         hint.pack(fill="x")
         warn = self._tlabel(self, padding=(10, 0, 10, 0),
                             font=("Segoe UI", 8, "bold"),
-                            foreground="#B26A00", justify="left",
+                            foreground="#B26A00", justify="left", wraplength=520,
                             text="\u26a0 Note: Latest Details is experimental - "
                                  "always confirm against the folders before issuing.")
         warn.pack(fill="x")
         self.skip_label = self._tlabel(self, padding=(10, 0, 10, 0),
                                       font=("Segoe UI", 8),
                                       foreground="#B26A00", justify="left",
+                                      wraplength=520,
                                       cursor="hand2")
         self.skip_label.pack(fill="x")
         self.skip_label.bind("<Button-1>", lambda _e: self._show_skipped_list())

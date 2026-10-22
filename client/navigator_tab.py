@@ -975,6 +975,11 @@ class Navigator(tk.Frame):
         sidebar = ttk.Frame(self, style="Sidebar.TFrame", padding=(14, 16))
         sidebar.grid(row=0, column=0, sticky="ns")
         sidebar.configure(width=265)
+        # The children are packed, so pack propagation (not grid) is what
+        # dictates the frame's requested width - without this the sidebar
+        # always draws at its content width (~162 px) and every configure
+        # (width=...) call is silently ignored.
+        sidebar.pack_propagate(False)
         sidebar.grid_propagate(False)
         self._sidebar = sidebar
         self._sidebar_manual = False
@@ -1090,7 +1095,14 @@ class Navigator(tk.Frame):
         self.title_var = tk.StringVar(value="Select a job")
         ttk.Label(top, textvariable=self.title_var, style="Title.TLabel").grid(row=0, column=0, sticky="w")
         self.path_var = tk.StringVar(value=job_root())
-        ttk.Label(top, textvariable=self.path_var, style="Sub.TLabel").grid(row=1, column=0, sticky="w", pady=(3, 0))
+        self._path_full = job_root()
+        self.path_label = ttk.Label(top, textvariable=self.path_var, style="Sub.TLabel")
+        self.path_label.grid(row=1, column=0, sticky="w", pady=(3, 0))
+        # A full job path is far wider than the content column; letting the
+        # label ask for its natural width inflates the whole right side and
+        # pushes the window's requested size past the screen. Elide it to
+        # the column instead.
+        top.bind("<Configure>", self._fit_path_label, add="+")
 
         actions = ttk.Frame(main, style="App.TFrame")
         actions.grid(row=1, column=0, sticky="ew", pady=(10, 4))
@@ -1187,6 +1199,42 @@ class Navigator(tk.Frame):
         self._show_placeholder()
         self._fit_sidebar_width()
 
+    def _fit_path_label(self, event=None):
+        """Elide the job path from the middle so it never asks for more
+        width than the content column has (keeps the drive/share head and
+        the job folder tail, which is the part people read)."""
+        full = getattr(self, "_path_full", "") or ""
+        if not full:
+            self.path_var.set("")
+            return
+        try:
+            avail = int(event.width if event is not None
+                        else self.path_label.master.winfo_width()) - 4
+        except (tk.TclError, TypeError, ValueError, AttributeError):
+            return
+        if avail < 80:
+            avail = 80
+        import tkinter.font as tkfont
+        try:
+            spec = ttk.Style(self).lookup("Sub.TLabel", "font") or "TkDefaultFont"
+            font = tkfont.Font(root=self, font=spec)
+        except tk.TclError:
+            font = tkfont.nametofont("TkDefaultFont")
+        text = full
+        if font.measure(full) > avail:
+            tail_len = max(12, min(len(full) // 3, 60))
+            tail = full[-tail_len:]
+            head = full[:-tail_len]
+            while head and font.measure(head + "\u2026" + tail) > avail:
+                head = head[:-3] if len(head) > 3 else ""
+            text = (head.rstrip("\\/") + "\u2026" + tail) if head else "\u2026" + tail
+            while text and font.measure(text) > avail:
+                text = text[1:]
+                if text:
+                    text = "\u2026" + text.lstrip("\u2026\\/")
+        if self.path_var.get() != text:
+            self.path_var.set(text)
+
     def _fit_sidebar_width(self):
         """Size the sidebar to its content, in real pixels on this machine
         (a fixed width clips names under display scaling). Widest favorite
@@ -1223,10 +1271,13 @@ class Navigator(tk.Frame):
 
     def _sidebar_max_width(self):
         """Widest the sidebar can get without starving the main content:
-        the absolute cap, or the window width minus a usable content
-        column, whichever is smaller."""
+        the absolute cap, the window minus a usable content column, or 45%
+        of the window - whichever is smallest. The percentage matters at
+        laptop widths, where "window - 420" alone would still let the
+        sidebar take over half the screen."""
+        win = self._window_width()
         return max(SIDEBAR_MIN_W,
-                   min(SIDEBAR_MAX_W, self._window_width() - MAIN_MIN_W))
+                   min(SIDEBAR_MAX_W, win - MAIN_MIN_W, int(win * 0.45)))
 
     # While a grip is dragged only a thin guide line moves - no widget
     # resizes, so nothing re-lays out and there is nothing to lag. The new
@@ -1330,7 +1381,10 @@ class Navigator(tk.Frame):
         """Fit the sidebar to the window: shrinking clamps it so the main
         content never disappears, and growing gives a manual width back.
         The saved preference is left untouched either way."""
-        top = self.winfo_toplevel()
+        try:
+            top = self.winfo_toplevel()
+        except tk.TclError:
+            return  # already being torn down
         if event is not None and getattr(event, "widget", None) is not top:
             return
         if getattr(self, "_grip_active", False):
@@ -1546,7 +1600,8 @@ class Navigator(tk.Frame):
     def _open_job(self, name):
         self.current_job = name
         self.title_var.set(name)
-        self.path_var.set(os.path.join(job_root(), name))
+        self._path_full = os.path.join(job_root(), name)
+        self._fit_path_label()
         self._show_job_async()
         self._add_recent(name)
         self.status_var.set("")
