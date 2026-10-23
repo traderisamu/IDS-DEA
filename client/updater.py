@@ -23,6 +23,7 @@ Safety rails, all deliberate:
 """
 import os
 import re
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -36,7 +37,53 @@ from shared import pathutils
 PENDING_SUFFIX = ".pending.exe"
 BACKUP_SUFFIX = ".bak"
 NOTICE_FILENAME = "updated_from.txt"
+MANIFEST_FILENAME = "manifest.txt"
 MIN_EXE_BYTES = 1024 * 1024
+HASH_CHUNK = 1024 * 1024
+
+
+def sha256_of(path):
+    """Streaming SHA-256 of a file, upper-case hex (matches the manifest
+    build.bat writes, so plain string comparison works)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(HASH_CHUNK), b""):
+            h.update(chunk)
+    return h.hexdigest().upper()
+
+
+def _parse_manifest(text):
+    """'<version>|<size>|<sha256>' lines -> {(maj,...): (size, sha)}.
+    Anything malformed is ignored; an empty result just means 'no
+    integrity data available', which callers treat as size-only."""
+    entries = {}
+    for line in (text or "").splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) != 3:
+            continue
+        ver = _parse_version(parts[0])
+        try:
+            size = int(parts[1])
+        except ValueError:
+            continue
+        sha = parts[2].upper()
+        if ver is None or size <= 0 or len(sha) != 64:
+            continue
+        entries[ver] = (size, sha)
+    return entries
+
+
+def read_manifest(dist_folder=None):
+    """Integrity table staged next to the share exe, or {} when the file
+    is missing/offline/unreadable (older releases predate it)."""
+    folder = pathutils.resolve_existing_dir(dist_folder or C.UPDATE_DIST_FOLDER)
+    try:
+        path = os.path.join(folder, MANIFEST_FILENAME)
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read(4096)
+    except (OSError, TypeError):
+        return {}
+    return _parse_manifest(text)
 
 
 def _parse_version(text):
@@ -105,19 +152,41 @@ def _busy_with_dialogs(app):
         return True
 
 
-def _stage_files(app, dist_folder):
+def _stage_files(app, dist_folder, staged_version=None):
     """Copies the staged exe (+ admin_links.json when present) next to the
-    running one. Returns (target, pending) paths, or None on any problem."""
+    running one. Returns (target, pending) paths, or None on any problem.
+
+    The copy is verified twice: against the share file itself, and (when
+    manifest.txt covers this release) against its recorded SHA-256, both
+    before and after the local copy. A truncated download is refused here
+    so the swap can never install a half-written exe."""
     try:
         target = os.path.join(install_dir(), C.UPDATE_EXE_FILENAME)
         staged_exe = os.path.join(dist_folder, C.UPDATE_EXE_FILENAME)
         if not os.path.isfile(staged_exe):
             return None
-        if os.path.getsize(staged_exe) < MIN_EXE_BYTES:
+        staged_size = os.path.getsize(staged_exe)
+        if staged_size < MIN_EXE_BYTES:
             return None
+        want = None
+        ver = _parse_version(staged_version) if staged_version else None
+        if ver is not None:
+            want = read_manifest(dist_folder).get(ver)
+        if want is not None:
+            want_size, want_sha = want
+            if staged_size != want_size:
+                return None
+            if sha256_of(staged_exe) != want_sha:
+                return None
         pending = target + PENDING_SUFFIX
         shutil.copyfile(staged_exe, pending)
-        if os.path.getsize(pending) != os.path.getsize(staged_exe):
+        if os.path.getsize(pending) != staged_size:
+            try:
+                os.remove(pending)
+            except OSError:
+                pass
+            return None
+        if want is not None and sha256_of(pending) != want[1]:
             try:
                 os.remove(pending)
             except OSError:
@@ -167,6 +236,7 @@ set "BACKUP=%~3"
 set "NOTICE=%~4"
 set "OLDVER=%~5"
 set "PID=%~6"
+set "WANT=%~7"
 set "WAITS=0"
 :waitloop
 tasklist /FI "PID eq %PID%" /FO CSV /NH 2>nul | findstr /R /C:"\",\"%PID%\",\"" >nul
@@ -179,10 +249,24 @@ goto :waitloop
 del "%PENDING%" >nul 2>&1
 (goto) 2>nul & del "%~f0"
 :swapped
+REM Rename instead of copy: a rename either happens or it doesn't, so a
+REM locked/quarantined target can never leave a half-written exe behind
+REM (that produced 'Could not load PyInstaller's embedded PKG archive').
+if not exist "%PENDING%" goto :relaunch
+if "%WANT%"=="" goto :do_swap
+for %%A in ("%PENDING%") do set "GOT=%%~zA"
+if not "%GOT%"=="%WANT%" goto :relaunch
+:do_swap
 if exist "%TARGET%" copy /Y "%TARGET%" "%BACKUP%" >nul
-copy /Y "%PENDING%" "%TARGET%" >nul
+move /Y "%PENDING%" "%TARGET%" >nul 2>&1
+if not exist "%TARGET%" goto :relaunch
+if "%WANT%"=="" goto :accept
+for %%A in ("%TARGET%") do set "NEW=%%~zA"
+if not "%NEW%"=="%WANT%" goto :relaunch
+:accept
 del "%PENDING%" >nul 2>&1
 echo %OLDVER%>"%NOTICE%"
+:relaunch
 start "" "%TARGET%"
 (goto) 2>nul & del "%~f0"
 """
@@ -198,9 +282,13 @@ def _relaunch_through_updater(app, target, pending):
         backup = target + BACKUP_SUFFIX
         with open(bat_path, "w", encoding="utf-8") as f:
             f.write(_UPDATER_BAT)
+        try:
+            want = str(os.path.getsize(pending))
+        except OSError:
+            want = ""
         subprocess.Popen(
             ["cmd", "/c", bat_path, target, pending, backup, notice,
-             C.APP_VERSION, str(os.getpid())],
+             C.APP_VERSION, str(os.getpid()), want],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL, close_fds=True,
             creationflags=(getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -233,7 +321,7 @@ def _try_update(app, dist_folder=None):
         return False, f"You are on the latest version (v{C.APP_VERSION})."
     if _busy_with_dialogs(app):
         return False, "Close open dialogs first, then check again."
-    staged_paths = _stage_files(app, folder)
+    staged_paths = _stage_files(app, folder, staged)
     if not staged_paths:
         return False, "Download failed - keeping the current version."
     target, pending = staged_paths

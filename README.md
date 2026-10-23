@@ -26,6 +26,9 @@ dea_app/
 │                               (creates a dist\ subfolder here with the exe in it)
 ├── install.bat               <- Run on each employee's PC to install - stays
 │                               right here, reads the exe from dist\ automatically
+├── repair.bat                <- Run when an installed copy won't start
+│                               ("Could not load PyInstaller's embedded PKG
+│                               archive") - re-copies + verifies the exe
 ├── uninstall.bat             <- Run on an employee's PC to remove it
 ├── requirements.txt
 ├── client/                   <- App source (GUI, calendar, admin dashboard,
@@ -73,19 +76,26 @@ for this step rather than a few seconds.
 
 The shared handout folder (e.g. `...\Engg Software\DEA`) needs only
 the contents of `dist\` copied over whole: `IDS_DEA_Logger.exe` +
-`version.txt` + `install.bat` + `uninstall.bat`. `build.bat` stages
-exactly these four into `dist\` on every build, so there is nothing
-left to gather by hand. Never copy a `DEA_Config.xlsx` or
-`admin_links.json` into the live folder - the team's live copies there
-are authoritative. (On a brand-new shared folder with no config yet,
-copy the repo's `DEA_Config.xlsx` there once by hand, or run
-`install.bat` from the project folder where the seed sits next to it.)
+`version.txt` + `manifest.txt` + `install.bat` + `uninstall.bat` +
+`repair.bat`. `build.bat` stages exactly these six into `dist\` on
+every build, so there is nothing left to gather by hand. Never copy a
+`DEA_Config.xlsx` or `admin_links.json` into the live folder - the
+team's live copies there are authoritative. (On a brand-new shared
+folder with no config yet, copy the repo's `DEA_Config.xlsx` there once
+by hand, or run `install.bat` from the project folder where the seed
+sits next to it.)
 
 `version.txt` is what drives the app's silent auto-update: every launch
 compares it against the running build and, when the staged one is newer,
 downloads it, swaps it in on restart (keeping one `.bak`), and relaunches
 - no prompts, no `install.bat` needed for updates. Deleting or editing
 `version.txt` just disables auto-update; the app keeps running.
+
+`manifest.txt` is one line, `<version>|<bytes>|<sha256>`, written by
+`build.bat`. The updater and `repair.bat` check the share exe against it
+before anything is copied or swapped, so a half-synced or truncated file
+is refused instead of being installed. If the file is missing (an older
+release), both fall back to size-only checks.
 
 ## 4. Install on each team member's PC
 
@@ -710,3 +720,30 @@ re-run `generate_icon.py` (needs `pip install pillow`), then rebuild with
 - **Deletes have a brief undo.** A short "Entry deleted - Undo" bar
   appears for a few seconds after deleting an entry, as a safety net
   against a misclick, before it fades away.
+- **Updates and installs never swap in an unverified exe.** A corrupt
+  installed exe can't start, so it can't fix itself - which is why the
+  swap is a rename (all-or-nothing, never a half-written file), the
+  pending copy is verified against `manifest.txt` (size + SHA-256) both
+  on the share and after copying, and a refused swap keeps the old exe
+  running. `install.bat` uses the same copy-verify-rename sequence and
+  keeps the previous file as `IDS_DEA_Logger.exe.bak`.
+
+### "Could not load PyInstaller's embedded PKG archive from the executable"
+
+That dialog means the installed exe on that PC is truncated - usually a
+copy that was cut short (network/sync hiccup) or a file trimmed by
+antivirus. It is not a data problem: logs and the config are untouched.
+
+1. Run **`IDS PH DEA Logger Repair`** from the Start Menu (installed
+   copies have it) or **`repair.bat`** from the release folder on the
+   share. It re-copies the exe, checks it against `manifest.txt`, keeps
+   the broken file as `.bak`, and launches the app.
+2. If Repair reports that the release copy doesn't match `manifest.txt`,
+   the share copy is still syncing or itself damaged - re-copy the whole
+   `dist\` folder to the share, then run Repair again.
+3. If it keeps happening on one PC after a successful repair, antivirus
+   is the likely culprit; ask IT to exclude
+   `%LOCALAPPDATA%\IDS_DEA_Logger\IDS_DEA_Logger.exe`.
+4. Fallback without any script: delete
+   `%LOCALAPPDATA%\IDS_DEA_Logger\IDS_DEA_Logger.exe` and re-run
+   `install.bat` from the share.

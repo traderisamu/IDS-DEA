@@ -129,6 +129,19 @@ REM shared drive at rollout time.
 if exist "dist\version.txt" (
     echo       OK - release tag written to dist\version.txt
 )
+REM Integrity manifest: the updater and repair.bat verify the share exe
+REM against this (size + SHA256) before swapping anything into place, so a
+REM truncated/half-synced copy can never be installed. One line:
+REM   <version>|<bytes>|<sha256>
+"%VENV_PY%" -c "import sys, hashlib, os; sys.path.insert(0, '.'); from shared.constants import APP_VERSION; p = 'dist/IDS_DEA_Logger.exe'; h = hashlib.sha256(); f = open(p, 'rb'); [h.update(c) for c in iter(lambda: f.read(1048576), b'')]; f.close(); open('dist/manifest.txt', 'w').write('%s|%d|%s' % (APP_VERSION, os.path.getsize(p), h.hexdigest().upper()))"
+if exist "dist\manifest.txt" (
+    echo       OK - integrity manifest written to dist\manifest.txt
+) else (
+    echo ERROR: could not write dist\manifest.txt - installs would fall back
+    echo        to size-only verification. Re-run build.
+    pause
+    exit /b 1
+)
 REM Stage the full rollout handout into dist\ so it can be copied to
 REM the shared drive as-is (install.bat already resolves the exe,
 REM config seed, and admin-links fallback from its own folder when no
@@ -136,13 +149,18 @@ REM dist\ subfolder sits next to it). The config seed is first-install
 REM only - install.bat never overwrites a live shared config.
 copy /Y "%~dp0install.bat" "dist\install.bat" >nul
 copy /Y "%~dp0uninstall.bat" "dist\uninstall.bat" >nul
+copy /Y "%~dp0repair.bat" "dist\repair.bat" >nul
+if exist "dist\repair.bat" (
+    echo       OK - repair.bat staged for PCs that already have the app.
+)
 REM The live shared folder is authoritative for the config and admin
 REM links, so they are NEVER staged here - and any copies a previous
 REM build left behind are removed so they can't be pasted over it.
 if exist "dist\DEA_Config.xlsx" del "dist\DEA_Config.xlsx" >nul 2>&1
 if exist "dist\admin_links.json" del "dist\admin_links.json" >nul 2>&1
 echo       OK - dist\ now holds the safe handout only: exe + version.txt +
-echo       install.bat + uninstall.bat (never the live config/admin links)
+echo       manifest.txt + install.bat + uninstall.bat + repair.bat
+echo       (never the live config/admin links)
 
 echo.
 echo ============================================================

@@ -85,13 +85,42 @@ if /i not "%CLOSEAPP%"=="Y" exit /b 0
 taskkill /IM IDS_DEA_Logger.exe /F >nul 2>&1
 timeout /t 2 /nobreak >nul 2>&1
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
-copy /Y "%SRC_EXE%" "%TARGET_EXE%" >nul
-if errorlevel 1 (
-    echo       FAILED to copy exe. Check permissions on %INSTALL_DIR% and try again.
-    pause
-    exit /b 1
-)
+
+REM Never overwrite a working install with an unverified file: a truncated
+REM handout copy is exactly what produces "Could not load PyInstaller's
+REM embedded PKG archive from the executable" after an install. Copy to a
+REM .new side file, compare size + SHA256 against the source, then rename
+REM it into place (a rename either happens or it does not - it can never
+REM leave a half-written exe behind). The old exe is kept as .bak.
+set "NEW_EXE=%INSTALL_DIR%\IDS_DEA_Logger.exe.new"
+for %%A in ("%SRC_EXE%") do set "SRC_SIZE=%%~zA"
+if not defined SRC_SIZE goto :src_bad
+if %SRC_SIZE% LSS 1048576 goto :src_bad
+if exist "%NEW_EXE%" del "%NEW_EXE%" >nul 2>&1
+copy /Y "%SRC_EXE%" "%NEW_EXE%" >nul
+if errorlevel 1 goto :copy_failed
+for %%A in ("%NEW_EXE%") do set "NEW_SIZE=%%~zA"
+if not "%NEW_SIZE%"=="%SRC_SIZE%" goto :copy_failed
+call :hash_of "%SRC_EXE%"
+set "SRC_HASH=%HVAL%"
+call :hash_of "%NEW_EXE%"
+set "NEW_HASH=%HVAL%"
+if not defined SRC_HASH goto :verified
+if not defined NEW_HASH goto :copy_failed
+if /i not "%SRC_HASH%"=="%NEW_HASH%" goto :copy_failed
+:verified
+if exist "%TARGET_EXE%" copy /Y "%TARGET_EXE%" "%TARGET_EXE%.bak" >nul
+move /Y "%NEW_EXE%" "%TARGET_EXE%" >nul
+if errorlevel 1 goto :copy_failed
+for %%A in ("%TARGET_EXE%") do set "INST_SIZE=%%~zA"
+if not "%INST_SIZE%"=="%SRC_SIZE%" goto :copy_failed
 echo       OK - exe copied from: %SRC_EXE%
+if defined SRC_HASH echo       OK - verified: %SRC_SIZE% bytes, SHA256 %SRC_HASH%
+if not defined SRC_HASH echo       OK - verified by size only: %SRC_SIZE% bytes
+REM Remember where the release folder lives, so the local Repair.bat can
+REM re-copy from it later even when nobody has the handout at hand.
+> "%INSTALL_DIR%\share_path.txt" echo %SHARED_ROOT%
+if exist "%~dp0repair.bat" copy /Y "%~dp0repair.bat" "%INSTALL_DIR%\repair.bat" >nul
 REM Offline fallback for the NaviTool 2.0 tab's quick links (used only
 REM when the shared drive is unreachable - otherwise the shared copy wins).
 if exist "%~dp0admin_links.json" (
@@ -200,6 +229,14 @@ if exist "%STARTMENU_LNK%" (
     echo       WARNING - Start Menu shortcut could not be created (non-fatal;
     echo       the Desktop shortcut above is the primary launcher^).
 )
+REM Repair entry: double-click this if the app ever refuses to start with
+REM "Could not load PyInstaller's embedded PKG archive" (a truncated exe
+REM cannot self-update - this re-copies and verifies the file instead).
+set "STARTMENU_REPAIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\IDS PH DEA Logger Repair.lnk"
+if not exist "%INSTALL_DIR%\repair.bat" goto :skip_repair_link
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws=New-Object -ComObject WScript.Shell; $s=$ws.CreateShortcut('%STARTMENU_REPAIR%'); $s.TargetPath='%INSTALL_DIR%\repair.bat'; $s.WorkingDirectory='%INSTALL_DIR%'; $s.Description='Repair the IDS PH DEA Logger install (re-copy + verify the exe)'; $s.Save()" >nul 2>&1
+if exist "%STARTMENU_REPAIR%" echo       OK - Start Menu "Repair" shortcut created.
+:skip_repair_link
 echo.
 echo ============================================================
 echo  INSTALL COMPLETE
@@ -210,7 +247,36 @@ echo  open it. It also re-creates the Desktop shortcut and
 echo  auto-start registration on its own if either ever goes
 echo  missing, so this script only needs to run once per PC.
 echo.
+echo  If the app ever shows "Could not load PyInstaller's embedded
+echo  PKG archive", run "IDS PH DEA Logger Repair" from the Start
+echo  Menu (or repair.bat in this folder) - it re-copies the exe
+echo  from the share and verifies it before swapping it in.
+echo.
 set /p LAUNCH="Launch it now? (Y/N): "
 if /i "%LAUNCH%"=="Y" start "" "%TARGET_EXE%"
 
 pause
+exit /b 0
+
+:hash_of
+REM %1 = file. Sets HVAL to its SHA-256 (upper-case, no spaces), or leaves
+REM it empty when certutil is unavailable - callers then verify by size.
+set "HVAL="
+for /f "skip=1 delims=" %%H in ('certutil -hashfile %1 SHA256 2^>nul') do if not defined HVAL set "HVAL=%%H"
+set "HVAL=%HVAL: =%"
+exit /b 0
+
+:src_bad
+echo       ERROR - the handout exe looks truncated (%SRC_SIZE% bytes):
+echo       %SRC_EXE%
+echo       Re-copy the release folder from the share, then run this again.
+pause
+exit /b 1
+
+:copy_failed
+echo       FAILED to install a verified copy of the exe.
+echo       Check permissions on %INSTALL_DIR% and free disk space, then retry.
+echo       Any previously installed copy was left untouched.
+if exist "%NEW_EXE%" del "%NEW_EXE%" >nul 2>&1
+pause
+exit /b 1
