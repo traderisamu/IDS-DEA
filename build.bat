@@ -133,7 +133,7 @@ REM Integrity manifest: the updater and repair.bat verify the share exe
 REM against this (size + SHA256) before swapping anything into place, so a
 REM truncated/half-synced copy can never be installed. One line:
 REM   <version>|<bytes>|<sha256>
-"%VENV_PY%" -c "import sys, hashlib, os; sys.path.insert(0, '.'); from shared.constants import APP_VERSION; p = 'dist/IDS_DEA_Logger.exe'; h = hashlib.sha256(); f = open(p, 'rb'); [h.update(c) for c in iter(lambda: f.read(1048576), b'')]; f.close(); open('dist/manifest.txt', 'w').write('%s|%d|%s' % (APP_VERSION, os.path.getsize(p), h.hexdigest().upper()))"
+"%VENV_PY%" -c "import sys, hashlib, os; sys.path.insert(0, '.'); from shared.constants import APP_VERSION; p = 'dist/IDS_DEA_Logger.exe'; f = open(p, 'rb'); h = hashlib.sha256(); [h.update(c) for c in iter(lambda: f.read(1048576), b'')]; f.close(); open('dist/manifest.txt', 'w').write(APP_VERSION + '|' + str(os.path.getsize(p)) + '|' + h.hexdigest().upper())"
 if exist "dist\manifest.txt" (
     echo       OK - integrity manifest written to dist\manifest.txt
 ) else (
