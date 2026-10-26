@@ -117,10 +117,10 @@ if not "%INST_SIZE%"=="%SRC_SIZE%" goto :copy_failed
 echo       OK - exe copied from: %SRC_EXE%
 if defined SRC_HASH echo       OK - verified: %SRC_SIZE% bytes, SHA256 %SRC_HASH%
 if not defined SRC_HASH echo       OK - verified by size only: %SRC_SIZE% bytes
-REM Remember where the release folder lives, so the local Repair.bat can
-REM re-copy from it later even when nobody has the handout at hand.
+REM Remember where the release folder lives, so this script can be re-run
+REM from anywhere (the app's own updater reads the same share).
 > "%INSTALL_DIR%\share_path.txt" echo %SHARED_ROOT%
-if exist "%~dp0repair.bat" copy /Y "%~dp0repair.bat" "%INSTALL_DIR%\repair.bat" >nul
+if exist "%INSTALL_DIR%\repair.bat" del "%INSTALL_DIR%\repair.bat" >nul 2>&1
 REM Offline fallback for the NaviTool 2.0 tab's quick links (used only
 REM when the shared drive is unreachable - otherwise the shared copy wins).
 if exist "%~dp0admin_links.json" (
@@ -229,14 +229,11 @@ if exist "%STARTMENU_LNK%" (
     echo       WARNING - Start Menu shortcut could not be created (non-fatal;
     echo       the Desktop shortcut above is the primary launcher^).
 )
-REM Repair entry: double-click this if the app ever refuses to start with
-REM "Could not load PyInstaller's embedded PKG archive" (a truncated exe
-REM cannot self-update - this re-copies and verifies the file instead).
+REM Older builds dropped a "Repair" shortcut here; repair.bat is no longer
+REM shipped (re-running this script does the same verified re-copy), so
+REM clean both leftovers up.
 set "STARTMENU_REPAIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\IDS PH DEA Logger Repair.lnk"
-if not exist "%INSTALL_DIR%\repair.bat" goto :skip_repair_link
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws=New-Object -ComObject WScript.Shell; $s=$ws.CreateShortcut('%STARTMENU_REPAIR%'); $s.TargetPath='%INSTALL_DIR%\repair.bat'; $s.WorkingDirectory='%INSTALL_DIR%'; $s.Description='Repair the IDS PH DEA Logger install (re-copy + verify the exe)'; $s.Save()" >nul 2>&1
-if exist "%STARTMENU_REPAIR%" echo       OK - Start Menu "Repair" shortcut created.
-:skip_repair_link
+if exist "%STARTMENU_REPAIR%" del "%STARTMENU_REPAIR%" >nul 2>&1
 echo.
 echo ============================================================
 echo  INSTALL COMPLETE
@@ -248,9 +245,9 @@ echo  auto-start registration on its own if either ever goes
 echo  missing, so this script only needs to run once per PC.
 echo.
 echo  If the app ever shows "Could not load PyInstaller's embedded
-echo  PKG archive", run "IDS PH DEA Logger Repair" from the Start
-echo  Menu (or repair.bat in this folder) - it re-copies the exe
-echo  from the share and verifies it before swapping it in.
+echo  PKG archive", just run this script again from the release
+echo  folder - it re-copies the exe, verifies it, and keeps the
+echo  broken file as IDS_DEA_Logger.exe.bak.
 echo.
 set /p LAUNCH="Launch it now? (Y/N): "
 if /i "%LAUNCH%"=="Y" start "" "%TARGET_EXE%"

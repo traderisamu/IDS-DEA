@@ -26,9 +26,6 @@ dea_app/
 │                               (creates a dist\ subfolder here with the exe in it)
 ├── install.bat               <- Run on each employee's PC to install - stays
 │                               right here, reads the exe from dist\ automatically
-├── repair.bat                <- Run when an installed copy won't start
-│                               ("Could not load PyInstaller's embedded PKG
-│                               archive") - re-copies + verifies the exe
 ├── uninstall.bat             <- Run on an employee's PC to remove it
 ├── requirements.txt
 ├── client/                   <- App source (GUI, calendar, admin dashboard,
@@ -76,9 +73,9 @@ for this step rather than a few seconds.
 
 The shared handout folder (e.g. `...\Engg Software\DEA`) needs only
 the contents of `dist\` copied over whole: `IDS_DEA_Logger.exe` +
-`version.txt` + `manifest.txt` + `install.bat` + `uninstall.bat` +
-`repair.bat`. `build.bat` stages exactly these six into `dist\` on
-every build, so there is nothing left to gather by hand. Never copy a
+`version.txt` + `manifest.txt` + `install.bat` + `uninstall.bat`.
+`build.bat` stages exactly these five into `dist\` on every build, so
+there is nothing left to gather by hand. Never copy a
 `DEA_Config.xlsx` or `admin_links.json` into the live folder - the
 team's live copies there are authoritative. (On a brand-new shared
 folder with no config yet, copy the repo's `DEA_Config.xlsx` there once
@@ -92,9 +89,9 @@ downloads it, swaps it in on restart (keeping one `.bak`), and relaunches
 `version.txt` just disables auto-update; the app keeps running.
 
 `manifest.txt` is one line, `<version>|<bytes>|<sha256>`, written by
-`build.bat`. The updater and `repair.bat` check the share exe against it
-before anything is copied or swapped, so a half-synced or truncated file
-is refused instead of being installed. If the file is missing (an older
+`build.bat`. The updater checks the share exe against it before anything
+is copied or swapped, so a half-synced or truncated file is refused
+instead of being installed. If the file is missing (an older
 release), both fall back to size-only checks.
 
 ## 4. Install on each team member's PC
@@ -734,16 +731,16 @@ That dialog means the installed exe on that PC is truncated - usually a
 copy that was cut short (network/sync hiccup) or a file trimmed by
 antivirus. It is not a data problem: logs and the config are untouched.
 
-1. Run **`IDS PH DEA Logger Repair`** from the Start Menu (installed
-   copies have it) or **`repair.bat`** from the release folder on the
-   share. It re-copies the exe, checks it against `manifest.txt`, keeps
-   the broken file as `.bak`, and launches the app.
-2. If Repair reports that the release copy doesn't match `manifest.txt`,
-   the share copy is still syncing or itself damaged - re-copy the whole
-   `dist\` folder to the share, then run Repair again.
-3. If it keeps happening on one PC after a successful repair, antivirus
-   is the likely culprit; ask IT to exclude
+1. Run **`install.bat`** from the release folder on the share (it works
+   whether or not the app can start). It re-copies the exe, verifies size
+   and SHA-256, keeps the broken file as `IDS_DEA_Logger.exe.bak`, and
+   launches the app.
+2. If it reports that the copy could not be verified, the share copy is
+   still syncing or itself damaged - re-copy the whole `dist\` folder to
+   the share, then run `install.bat` again.
+3. If it keeps happening on one PC after a successful reinstall,
+   antivirus is the likely culprit; ask IT to exclude
    `%LOCALAPPDATA%\IDS_DEA_Logger\IDS_DEA_Logger.exe`.
-4. Fallback without any script: delete
-   `%LOCALAPPDATA%\IDS_DEA_Logger\IDS_DEA_Logger.exe` and re-run
-   `install.bat` from the share.
+4. No share access at that moment: delete
+   `%LOCALAPPDATA%\IDS_DEA_Logger\IDS_DEA_Logger.exe` and copy the exe
+   from a known-good PC instead, then run it once.

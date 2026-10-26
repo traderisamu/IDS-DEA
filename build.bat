@@ -129,7 +129,7 @@ REM shared drive at rollout time.
 if exist "dist\version.txt" (
     echo       OK - release tag written to dist\version.txt
 )
-REM Integrity manifest: the updater and repair.bat verify the share exe
+REM Integrity manifest: the updater verifies the share exe
 REM against this (size + SHA256) before swapping anything into place, so a
 REM truncated/half-synced copy can never be installed. One line:
 REM   <version>|<bytes>|<sha256>
@@ -149,17 +149,14 @@ REM dist\ subfolder sits next to it). The config seed is first-install
 REM only - install.bat never overwrites a live shared config.
 copy /Y "%~dp0install.bat" "dist\install.bat" >nul
 copy /Y "%~dp0uninstall.bat" "dist\uninstall.bat" >nul
-copy /Y "%~dp0repair.bat" "dist\repair.bat" >nul
-if exist "dist\repair.bat" (
-    echo       OK - repair.bat staged for PCs that already have the app.
-)
+if exist "dist\repair.bat" del "dist\repair.bat" >nul 2>&1
 REM The live shared folder is authoritative for the config and admin
 REM links, so they are NEVER staged here - and any copies a previous
 REM build left behind are removed so they can't be pasted over it.
 if exist "dist\DEA_Config.xlsx" del "dist\DEA_Config.xlsx" >nul 2>&1
 if exist "dist\admin_links.json" del "dist\admin_links.json" >nul 2>&1
 echo       OK - dist\ now holds the safe handout only: exe + version.txt +
-echo       manifest.txt + install.bat + uninstall.bat + repair.bat
+echo       manifest.txt + install.bat + uninstall.bat
 echo       (never the live config/admin links)
 
 echo.
