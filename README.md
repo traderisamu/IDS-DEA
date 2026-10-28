@@ -335,6 +335,16 @@ stutters. Both sizes are remembered per Windows user and clamp to the
 window so the content can never be squeezed off-screen. Double-click
 either strip to go back to the default; Escape cancels a drag.
 
+NaviTool paints its shell before the network answers: the sidebar, tabs and
+Quick Links are usable the instant the tab opens, the JOBS list fills in
+from a background scan ("Loading job folders…"), and the shared
+`admin_links.json` is picked up a moment later. Only the job-folder
+buttons ever wait on the share. **Show Items…** (beside Add to Favorites)
+opens a checklist of the items the open job offers; untick what you don't
+use and the rest disappears from every job - sections left with nothing are
+hidden too. The choice is per Windows user (`settings.json`), deletes
+nothing, and **Show all items** in the same dialog brings everything back.
+
 **Latest Details** (inside NaviTool) — one tab per connection family
 (BS, MC, VB, …; misc: STAIRS, LADDERS, RAILINGS, GATES, PIPE
 SUPPORTS, EC — Stair 1 EC1 and Stair 2 EC1 stay separate rows,

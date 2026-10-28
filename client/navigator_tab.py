@@ -59,6 +59,26 @@ def job_root():
     _JOB_ROOT_CACHE["at"] = now
     return path
 
+
+def _scan_job_dirs():
+    """Folder names under job_root(), sorted case-insensitively.
+
+    Module-level (and Tk-free) so it can run in a daemon thread and be
+    stubbed in tests: the walk costs ~0.3 s for 182 folders on a warm
+    share and much more on a slow day, which is exactly why the Navigator
+    paints its shell first and fills the job list in afterwards
+    (v2.6.39). Raises OSError when the JOBS root itself can't be read."""
+    names = []
+    with os.scandir(job_root()) as it:
+        for entry in it:
+            try:
+                if entry.is_dir():
+                    names.append(entry.name)
+            except OSError:
+                continue  # one unreadable entry must not kill the list
+    return sorted(names, key=str.lower)
+
+
 # Work-stage groups. Each section header is a click-to-collapse toggle.
 # Items are either plain buttons or dropdown (Menubutton) buttons; "{code}"
 # in a relative path is replaced with the job's 3-letter code. Only items
@@ -805,6 +825,24 @@ def _user_links(links):
     admin_targets = {l.get("target") for l in get_admin_links()}
     return [l for l in (links or []) if l.get("target") not in admin_targets]
 
+
+def _local_admin_links():
+    """Admin quick links that need NO network: the admin_links.json shipped
+    next to the exe, else the embedded defaults. Used to seed the memo so
+    the Navigator's first paint never waits on the share; the shared copy
+    is read in a background thread right after (see
+    Navigator._start_admin_links_refresh)."""
+    return _read_links_json(_admin_links_file()) or ADMIN_LINKS
+
+
+def _link_signature(links):
+    """Comparable fingerprint of a link set - lets the background shared
+    read tell "same links, different list object" from a real change, so
+    an unchanged set never repaints the footer."""
+    return [(l.get("name"), l.get("type"), l.get("target"),
+             l.get("icon"), l.get("color")) for l in (links or [])]
+
+
 def ensure_data():
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(SETTINGS_FILE):
@@ -932,6 +970,15 @@ def to_unc(path):
 class Navigator(tk.Frame):
     def __init__(self, master=None, **kwargs):
         super().__init__(master, **kwargs)
+        # v2.6.39: paint from local data only. Seeding the admin-links memo
+        # with the admin_links.json shipped next to the exe (or the embedded
+        # defaults) keeps the whole first paint - load_settings(),
+        # get_admin_links(), the Latest panel - off the network share. The
+        # shared copy is read in a daemon thread below and adopted only if
+        # it differs (see _start_admin_links_refresh).
+        if _ADMIN_LINKS_CACHE["links"] is None:
+            _ADMIN_LINKS_CACHE["links"] = _local_admin_links()
+            _ADMIN_LINKS_CACHE["at"] = time.monotonic()
         self.settings = load_settings()
         self.jobs = []
         self.current_job = None
@@ -942,11 +989,20 @@ class Navigator(tk.Frame):
         self._hover_menus = []
         self._job_token = 0  # guards async renders against rapid re-clicks
         self._select_after_id = None  # debounce for arrow-key scrolling
+        # Job-list loading state. The JOBS walk is a network read (~0.3 s
+        # for 182 folders here), so it runs in a daemon thread and lands
+        # via after() - the shell, sidebar and Quick Links are visible and
+        # clickable the moment this constructor returns.
+        self._jobs_token = 0
+        self._jobs_ready = False
+        self._jobs_scanning = False
+        self._jobs_notice = False
         self._build_style()
         self._build_ui()
-        self.refresh_jobs()
+        self._start_jobs_scan()
         self.refresh_favorites()
         self._prewarm()
+        self._start_admin_links_refresh()
 
     def _build_style(self):
         # NOTE: ttk styles (and especially theme_use) are application-global.
@@ -1123,6 +1179,11 @@ class Navigator(tk.Frame):
         actions.grid(row=1, column=0, sticky="ew", pady=(10, 4))
         ttk.Button(actions, text="Open Job", command=self.open_current_job).pack(side="left")
         ttk.Button(actions, text="Add to Favorites", command=self.add_favorite).pack(side="left", padx=6)
+        # Per-user item filter (v2.6.39): tick the folder items you actually
+        # use and the rest disappear from the job pages. Empty = show all,
+        # so nothing changes for anyone who never opens it.
+        ttk.Button(actions, text="Show Items\u2026",
+                   command=self._open_item_filter).pack(side="left")
 
         self.status_var = tk.StringVar(value="")
         status = ttk.Label(main, textvariable=self.status_var, style="Sub.TLabel")
@@ -1211,7 +1272,9 @@ class Navigator(tk.Frame):
         self._link_images = []
         self.bind_all("<MouseWheel>", self._scroll_content_wheel, add="+")
 
-        self._show_placeholder()
+        # The job list arrives from a background scan, so the first thing
+        # painted is the shell plus this notice - never a blank page.
+        self._show_placeholder("Loading job folders\u2026")
         self._fit_sidebar_width()
 
     def _fit_path_label(self, event=None):
@@ -1243,10 +1306,13 @@ class Navigator(tk.Frame):
             while head and font.measure(head + "\u2026" + tail) > avail:
                 head = head[:-3] if len(head) > 3 else ""
             text = (head.rstrip("\\/") + "\u2026" + tail) if head else "\u2026" + tail
-            while text and font.measure(text) > avail:
-                text = text[1:]
-                if text:
-                    text = "\u2026" + text.lstrip("\u2026\\/")
+            # Last resort: drop leading characters (keeping the ellipsis)
+            # until it fits. Every pass removes one REAL character, so this
+            # always terminates - the old version re-prefixed the ellipsis
+            # it had just stripped and spun forever at a tiny available
+            # width (e.g. a withdrawn window, or a squeezed column).
+            while len(text) > 1 and font.measure(text) > avail:
+                text = "\u2026" + text.lstrip("\u2026").lstrip("\\/")[1:]
         if self.path_var.get() != text:
             self.path_var.set(text)
 
@@ -1268,6 +1334,14 @@ class Navigator(tk.Frame):
             widest = max([font.measure(t) for t in texts if t] + [0])
             width = min(max(widest + 28 + 14, 220),
                         SIDEBAR_MAX_W, self._sidebar_max_width())
+            if not getattr(self, "_jobs_ready", True):
+                # The background job scan hasn't landed yet: fitting to an
+                # empty list would shrink the sidebar and then snap it back
+                # when the names arrive. Keep the width it was built at.
+                try:
+                    width = max(width, int(self._sidebar.cget("width")))
+                except (tk.TclError, TypeError, ValueError):
+                    pass
             self._sidebar.configure(width=width)
         except Exception:
             pass
@@ -1547,24 +1621,65 @@ class Navigator(tk.Frame):
     def refresh_jobs(self, record=False):
         if record:  # the Refresh Jobs button, not the first-visit scan
             _record("action:nav_refresh")
+        # v2.6.39: fire-and-forget. The JOBS walk is a network read, so it
+        # runs in a daemon thread and _apply_jobs paints the result; this
+        # call returns immediately (the old synchronous version froze the
+        # whole window for ~0.3 s on a warm share, longer on a slow day).
+        #
         # NOTE: the section cache is deliberately NOT wiped here. A full
         # wipe made every post-refresh click re-scan the network share
         # (the main click-lag complaint). Only entries for jobs that no
         # longer exist are pruned; favorites/recents rebuild in the
         # background via _prewarm(force=True); and the currently open job
-        # (if any) is rebuilt immediately below - so a rename or a new
-        # folder shows up as soon as you press this button.
-        try:
-            names = []
-            with os.scandir(job_root()) as it:
-                for entry in it:
-                    if entry.is_dir():
-                        names.append(entry.name)
-            self.jobs = sorted(names, key=str.lower)
-        except Exception as e:
-            self.jobs = []
-            self._show_placeholder("Cannot access JOBS directory.\n\n{}\n\n{}".format(job_root(), e))
+        # (if any) is rebuilt as soon as the scan lands - so a rename or a
+        # new folder shows up right after pressing this button.
+        self._start_jobs_scan(notice=bool(record))
+
+    def _start_jobs_scan(self, notice=False):
+        """Scan the JOBS root off the UI thread. `notice` asks for the
+        "Refreshed HH:MM." status once it lands (manual Refresh Jobs); the
+        first-visit scan stays quiet. A newer scan bumps the token, so a
+        slow result can never overwrite a fresher list."""
+        self._jobs_token += 1
+        token = self._jobs_token
+        self._jobs_scanning = True
+        self._jobs_notice = bool(notice)
+        if notice:
+            self.status_var.set("Scanning job folders\u2026")
+        elif not self._jobs_ready:
+            self.status_var.set("Loading job folders\u2026")
+
+        def work():
+            try:
+                names = _scan_job_dirs()
+                err = None
+            except Exception as e:  # OSError, or a share that vanished
+                names = []
+                err = e
+            try:
+                self.after(0, lambda: self._apply_jobs(token, names, err))
+            except Exception:
+                pass  # tab torn down while the scan was running
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_jobs(self, token, names, err=None):
+        """Paint a finished job scan (UI thread). Stale tokens are dropped
+        so only the newest scan wins."""
+        if token != self._jobs_token:
             return
+        self._jobs_scanning = False
+        self._jobs_ready = True
+        notice = self._jobs_notice
+        self._jobs_notice = False
+        if err is not None:
+            self.jobs = []
+            self.filter_jobs()
+            self._show_placeholder("Cannot access JOBS directory.\n\n{}\n\n{}"
+                                   .format(job_root(), err))
+            self.status_var.set("")
+            return
+        self.jobs = list(names)
         alive = set(self.jobs)
         with self._cache_lock:
             stale = [k for k in self._folder_cache if k not in alive]
@@ -1575,15 +1690,72 @@ class Navigator(tk.Frame):
         self.filter_jobs()
         self._fit_sidebar_width()
         self._prewarm(force=True)
-        if self.current_job and self.current_job in self.jobs:
+        if not self.current_job:
+            self._show_placeholder()
+        elif self.current_job in self.jobs:
+            # Rebuild the open job so a rename/new folder shows up at once.
             with self._cache_lock:
                 self._folder_cache.pop(self.current_job, None)
             self._show_job_async()
+        else:
+            self.current_job = None
+            self.title_var.set("Select a job")
+            self._path_full = job_root()
+            self._fit_path_label()
+            self._show_placeholder("That job folder no longer exists.\n\n"
+                                   "Select another job from the left.")
+        if notice:
             try:
                 import datetime as _dt
                 self.status_var.set("Refreshed %s." % _dt.datetime.now().strftime("%H:%M"))
             except Exception:
                 pass
+        else:
+            self.status_var.set("")
+
+    # ---------- shared admin links (background) ----------
+
+    def _start_admin_links_refresh(self):
+        """Read the shared admin_links.json off the network in a background
+        thread, then adopt it if it differs from the local set already on
+        screen. The first paint uses the local/embedded set, so a normal
+        launch never waits for this."""
+        def work():
+            try:
+                links = _read_links_json(_shared_admin_links_file())
+            except Exception:
+                links = None
+            if not links:
+                return  # keep what is already shown
+            try:
+                self.after(0, lambda: self._apply_admin_links(links))
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_admin_links(self, links):
+        """Adopt the shared admin link set (UI thread). No-op when it
+        matches what is already shown - the common case, so a normal
+        launch paints the footer exactly once."""
+        if not links:
+            return
+        same = _link_signature(links) == _link_signature(_ADMIN_LINKS_CACHE["links"])
+        _ADMIN_LINKS_CACHE["links"] = links
+        _ADMIN_LINKS_CACHE["at"] = time.monotonic()
+        if same:
+            return
+        # Admin links always render separately from per-user links; re-run
+        # the de-dupe now that the real shared set is known, so a personal
+        # link pointing at the same target can't appear twice.
+        try:
+            self.settings["links"] = _user_links(self.settings.get("links"))
+        except Exception:
+            pass
+        try:
+            self._refresh_quick_links()
+        except tk.TclError:
+            pass
 
     def filter_jobs(self):
         q = self.job_search.get().strip().lower()
@@ -1879,8 +2051,124 @@ class Navigator(tk.Frame):
                 pass
         self._latest_panel.refresh()
 
-    def _render_sections(self, sections):
+    def _visible_item_labels(self):
+        """The per-user item filter: the labels ticked in "Show Items...".
+        Empty/missing means show everything, so a fresh install - and
+        everyone who never opens the dialog - is completely unaffected."""
+        items = self.settings.get("visible_items") or []
+        if isinstance(items, str):
+            items = [items]
+        return {str(i).strip() for i in items if str(i).strip()}
 
+    def _filtered_sections(self, sections):
+        """Drop unticked items (v2.6.39) and any section left with nothing.
+        An untitled group is the fallback "Job folder" entry for a job with
+        no recognised stage folders - it is never filtered, because it is
+        the only way into such a job."""
+        visible = self._visible_item_labels()
+        if not visible:
+            return list(sections)
+        out = []
+        for title, items in sections:
+            if title:
+                items = [it for it in items if it.get("label") in visible]
+                if not items:
+                    continue
+            out.append((title, items))
+        return out
+
+    def _item_filter_labels(self):
+        """Labels the "Show Items..." dialog offers: whatever the open
+        job's built sections contain (that is what the user is looking at),
+        plus anything already ticked so a job that lacks one of their items
+        can never silently drop that choice."""
+        labels = []
+        with self._cache_lock:
+            sections = self._folder_cache.get(self.current_job) if self.current_job else None
+        for _title, items in (sections or []):
+            for it in items:
+                if it.get("label") and it["label"] not in labels:
+                    labels.append(it["label"])
+        for lab in sorted(self._visible_item_labels()):
+            if lab not in labels:
+                labels.append(lab)
+        return labels
+
+    def _open_item_filter(self):
+        """Checklist of the items the current job offers. Ticking a subset
+        hides the rest from the job pages for THIS Windows user only
+        (settings.json); "Show all items" is the one-click way back."""
+        labels = self._item_filter_labels()
+        if not labels:
+            messagebox.showinfo(
+                "Show Items",
+                "Open a job first - this list shows the items that job offers.")
+            return
+        current = self._visible_item_labels()
+        win = tk.Toplevel(self)
+        win.title("Show Items")
+        win.transient(self.winfo_toplevel())
+        win.resizable(False, False)
+        body = ttk.Frame(win, padding=14)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Tick the items you use. Unticked items are hidden "
+                             "from the job folders page; nothing is deleted.",
+                  style="Sub.TLabel", wraplength=340, justify="left").pack(
+                      anchor="w", pady=(0, 10))
+        vars_ = {}
+        for lab in labels:
+            var = tk.BooleanVar(value=(not current) or lab in current)
+            vars_[lab] = var
+            ttk.Checkbutton(body, text=lab, variable=var).pack(anchor="w")
+
+        def save():
+            chosen = [lab for lab in labels if vars_[lab].get()]
+            if len(chosen) == len(labels):
+                self.settings.pop("visible_items", None)  # all = no filter
+            else:
+                self.settings["visible_items"] = chosen
+            try:
+                save_settings(self.settings)
+            except Exception:
+                pass
+            win.destroy()
+            self._rerender_current()
+
+        def show_all():
+            self.settings.pop("visible_items", None)
+            try:
+                save_settings(self.settings)
+            except Exception:
+                pass
+            win.destroy()
+            self._rerender_current()
+
+        btns = ttk.Frame(body)
+        btns.pack(fill="x", pady=(12, 0))
+        ttk.Button(btns, text="Show all items", command=show_all).pack(side="left")
+        ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="right")
+        ttk.Button(btns, text="Save", command=save).pack(side="right", padx=(0, 6))
+        try:
+            win.grab_set()
+        except tk.TclError:
+            pass
+
+    def _rerender_current(self):
+        """Repaint after the item filter changed - cached sections only, so
+        this never touches the network."""
+        if not self.current_job:
+            self._show_placeholder()
+            return
+        with self._cache_lock:
+            cached = self._folder_cache.get(self.current_job)
+        if cached is None:
+            self._show_job_async()
+            return
+        self._clear_content()
+        self._render_sections(cached)
+
+    def _render_sections(self, sections):
+        sections = self._filtered_sections(sections)
         width = 1
         for title, items in sections:
             for it in items:
@@ -1915,6 +2203,14 @@ class Navigator(tk.Frame):
                 frame.grid_remove()
                 toggle.configure(text="\u25B8")
             row += 1
+
+        if not sections:
+            ttk.Label(page_folders,
+                      text="No items are shown for this job.\n"
+                           "Use \u201cShow Items\u2026\u201d above to tick the ones you use.",
+                      style="Sub.TLabel", font=("Segoe UI", 10),
+                      justify="center").grid(row=0, column=0, columnspan=3,
+                                             pady=(30, 10))
 
         self._ensure_quick_footer()
         self._mount_latest_panel(page_latest)
