@@ -8,6 +8,7 @@ notebook tab by client/main_app.py. Must stay import-safe: no Tk root
 creation at import.
 """
 import os
+import subprocess
 import tkinter as tk
 from tkinter import ttk, filedialog
 
@@ -21,10 +22,44 @@ except Exception:
     DND_FILES = None
 
 
+def _drive_map():
+    """Map of lower-cased UNC share root -> drive letter, e.g. T:."""
+    try:
+        out = subprocess.check_output(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "Get-PSDrive -PSProvider FileSystem | Where-Object DisplayRoot | "
+             "ForEach-Object { $_.Name + '|' + $_.DisplayRoot }"],
+            stderr=subprocess.DEVNULL, text=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        return {}
+    result = {}
+    for line in out.splitlines():
+        name, _, root = line.strip().partition("|")
+        if name and root:
+            result[root.rstrip("\\").lower()] = name.upper() + ":"
+    return result
+
+
+def unc_to_mapped(unc, drives):
+    """UNC path -> mapped-drive form (drive letter first) when one covers it;
+    otherwise the path is returned unchanged."""
+    low = unc.lower()
+    best = ""
+    for root in drives:
+        if (low == root or low.startswith(root + "\\")) and len(root) > len(best):
+            best = root
+    if not best:
+        return unc
+    return drives[best] + unc[len(best):]
+
+
 class LinkGeneratorFrame(ttk.Frame):
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
-        self._gen_files = []  # [(name, unc)]
+        self._gen_files = []  # [(name, unc)] - always stored as UNC
+        self._drives = {}
+        self._mode = tk.StringVar(value="unc")  # "unc" | "mapped"
         self._build_ui()
         self._refresh_gen_tree()
 
@@ -43,12 +78,18 @@ class LinkGeneratorFrame(ttk.Frame):
         ttk.Button(btn_row, text="Add Folder...", command=self._gen_pick_folder).pack(side="left", padx=6)
         ttk.Button(btn_row, text="Copy All", command=self._gen_copy_all).pack(side="left")
         ttk.Button(btn_row, text="Clear", command=self._gen_clear).pack(side="right")
+        fmt = ttk.Frame(btn_row)
+        fmt.pack(side="right", padx=(0, 14))
+        ttk.Label(fmt, text="Link format:").pack(side="left", padx=(0, 6))
+        for text, val in (("UNC  (\\\\server\\share)", "unc"), ("Mapped drive  (T:\\)", "mapped")):
+            ttk.Radiobutton(fmt, text=text, value=val, variable=self._mode,
+                            command=self._on_mode_change).pack(side="left", padx=(0, 8))
 
         body = ttk.Frame(self, padding=(10, 6, 10, 0))
         body.pack(fill="both", expand=True)
         tree = ttk.Treeview(body, columns=("unc",), show="tree headings", height=4)
         tree.heading("#0", text="Name")
-        tree.heading("unc", text="UNC Path")
+        tree.heading("unc", text="Path")
         tree.column("#0", width=220, stretch=False)
         tree.column("unc", width=560, stretch=True)
         tree_vsb = ttk.Scrollbar(body, orient="vertical", command=tree.yview)
@@ -108,6 +149,22 @@ class LinkGeneratorFrame(ttk.Frame):
         elif raw_paths:
             self._gen_hint.set("Those are already in the list.")
 
+    def _display(self, unc):
+        if self._mode.get() == "mapped":
+            return unc_to_mapped(unc, self._drives)
+        return unc
+
+    def _on_mode_change(self):
+        if self._mode.get() == "mapped":
+            self._drives = _drive_map()
+            if not self._drives:
+                self._gen_hint.set("No mapped network drives found - showing UNC paths.")
+                self._refresh_gen_tree()
+                return
+        self._refresh_gen_tree()
+        self._gen_hint.set("Showing {} paths.".format(
+            "mapped-drive" if self._mode.get() == "mapped" else "UNC"))
+
     def _refresh_gen_tree(self):
         tree = getattr(self, "_gen_tree", None)
         if tree is None:
@@ -116,7 +173,7 @@ class LinkGeneratorFrame(ttk.Frame):
             for x in tree.get_children():
                 tree.delete(x)
             for name, unc in self._gen_files:
-                tree.insert("", "end", text=name, values=(unc,))
+                tree.insert("", "end", text=name, values=(self._display(unc),))
         except tk.TclError:
             pass
 
@@ -143,7 +200,7 @@ class LinkGeneratorFrame(ttk.Frame):
             self._gen_hint.set("Nothing to copy yet - drop or add files first.")
             return
         self.clipboard_clear()
-        self.clipboard_append("\n".join(u for _, u in self._gen_files))
+        self.clipboard_append("\n".join(self._display(u) for _, u in self._gen_files))
         self._gen_hint.set(f"Copied {len(self._gen_files)} link(s).")
 
     def _gen_clear(self):

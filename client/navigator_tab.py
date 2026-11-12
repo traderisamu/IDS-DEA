@@ -1229,7 +1229,7 @@ class Navigator(tk.Frame):
         content_wrap = ttk.Frame(main, style="App.TFrame")
         content_wrap.grid(row=4, column=0, sticky="nsew")
         content_wrap.grid_columnconfigure(0, weight=1)
-        content_wrap.grid_rowconfigure(0, weight=1)
+        content_wrap.grid_rowconfigure(0, weight=1, minsize=220)
         self._sub_nb = ttk.Notebook(content_wrap)
         self._sub_nb.grid(row=0, column=0, sticky="nsew")
         self._page_frames = {}
@@ -1261,8 +1261,28 @@ class Navigator(tk.Frame):
             self._page_canvas[_pname] = _cv
             self._page_inner[_pname] = _inner
             self._scroll_map[_inner] = _cv
-        self._quick_footer = ttk.Frame(main, style="App.TFrame")
-        self._quick_footer.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        # The footer sits in a height-capped canvas: with MANAGE LINKS
+        # expanded it scrolls internally instead of squeezing the Job
+        # Folders / Latest pages out of view.
+        self._footer_host = ttk.Frame(main, style="App.TFrame")
+        self._footer_host.grid(row=5, column=0, sticky="ew", pady=(8, 0))
+        self._footer_host.grid_columnconfigure(0, weight=1)
+        self._footer_canvas = tk.Canvas(self._footer_host, background="#f5f6f8",
+                                        highlightthickness=0, height=1)
+        self._footer_vsb = ttk.Scrollbar(self._footer_host, orient="vertical",
+                                         command=self._footer_canvas.yview)
+        self._footer_canvas.configure(yscrollcommand=self._footer_vsb.set)
+        self._footer_canvas.grid(row=0, column=0, sticky="ew")
+        self._quick_footer = ttk.Frame(self._footer_canvas, style="App.TFrame")
+        self._footer_win = self._footer_canvas.create_window(
+            (0, 0), window=self._quick_footer, anchor="nw")
+        self._scroll_map[self._quick_footer] = self._footer_canvas
+        self._quick_footer.bind("<Configure>", lambda e: self._fit_footer())
+        self._footer_canvas.bind(
+            "<Configure>",
+            lambda e: (self._footer_canvas.itemconfigure(self._footer_win, width=e.width),
+                       self._fit_footer()))
+        main.bind("<Configure>", lambda e: self._fit_footer(), add="+")
         for _col in range(3):
             self._quick_footer.grid_columnconfigure(_col, weight=1, uniform="btn")
         self._quick_footer_built = False
@@ -1276,6 +1296,35 @@ class Navigator(tk.Frame):
         # painted is the shell plus this notice - never a blank page.
         self._show_placeholder("Loading job folders\u2026")
         self._fit_sidebar_width()
+
+    def _fit_footer(self):
+        """Cap the Quick Links footer at ~30% of the content height (min
+        120px); past that it scrolls, so the Job Folders page always keeps
+        room and stays reachable with MANAGE LINKS expanded."""
+        try:
+            cv = self._footer_canvas
+            natural = self._quick_footer.winfo_reqheight()
+            main = self._footer_host.master
+            avail = main.winfo_height()
+            if avail > 1:
+                # Space actually left for the footer: the content frame
+                # minus its padding, the rows above the tabs, the gap,
+                # and a guaranteed 200px for the Job Folders / Latest tabs.
+                above = main.grid_bbox(0, 0, 0, 3)[3]
+                cap = max(100, min(avail - 36 - above - 8 - 200,
+                                   int(avail * 0.4)))
+            else:
+                cap = natural
+            height = max(1, min(natural, cap))
+            cv.configure(height=height,
+                         scrollregion=(0, 0, 0, natural))
+            if natural > height:
+                self._footer_vsb.grid(row=0, column=1, sticky="ns")
+            else:
+                self._footer_vsb.grid_remove()
+                cv.yview_moveto(0)
+        except (tk.TclError, AttributeError):
+            pass
 
     def _fit_path_label(self, event=None):
         """Elide the job path from the middle so it never asks for more
@@ -1833,7 +1882,7 @@ class Navigator(tk.Frame):
                 node = node.master
         except tk.TclError:
             return
-        if target is None:
+        if target is None or isinstance(widget, ttk.Treeview):
             return
         try:
             target.yview_scroll(-1 * (event.delta // 120), "units")
