@@ -885,6 +885,45 @@ def normalize_path(path):
     return path
 
 
+def _fix_broken_shortcut(lnk):
+    """For a .lnk whose stored target does not exist on this PC, the
+    equivalent path under this PC's Egnyte share - else None.
+
+    Shortcuts made on one PC often store a mapped-drive target
+    ('T:\\Shared\\...') or the other share alias ('...\\idsinc\\...'); on a PC
+    without that drive letter / alias Windows only shows a 'problem with
+    shortcut' dialog. The .lnk's own location is proven to resolve here, so
+    its share root ('\\\\EgnyteDrive\\idsinc (2)') is reused for the target."""
+    if not lnk.lower().endswith(".lnk"):
+        return None
+    try:
+        out = subprocess.check_output(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "(New-Object -ComObject WScript.Shell)"
+             ".CreateShortcut($env:DEA_LNK).TargetPath"],
+            env=dict(os.environ, DEA_LNK=lnk),
+            stderr=subprocess.DEVNULL, text=True, timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).strip()
+    except Exception:
+        return None
+    if not out or os.path.exists(out):
+        return None
+    cands = []
+    m = re.match(r"^[A-Za-z]:(\\.*)$", out)
+    parts = lnk.split("\\")
+    if m and lnk.startswith("\\\\") and len(parts) > 4:
+        cands.append("\\".join(parts[:4]) + m.group(1))  # \\EgnyteDrive\<share>
+    if pathutils:
+        cands.append(pathutils.remap_share_path(out))
+    for c in cands:
+        try:
+            if os.path.exists(c):
+                return c
+        except OSError:
+            continue
+    return None
+
+
 def open_target(target, record=True):
     t = normalize_path(target)
     if not t:
@@ -897,6 +936,15 @@ def open_target(target, record=True):
     if record:  # callers that log a more specific action pass False
         _record("action:open_link")
     try:
+        fixed = _fix_broken_shortcut(t)
+        if fixed:
+            # Launch the real target ourselves, from its own folder (the
+            # shortcut's working directory), instead of the broken .lnk.
+            import ctypes
+            rc = ctypes.windll.shell32.ShellExecuteW(
+                None, "open", fixed, None, os.path.dirname(fixed), 1)
+            if rc > 32:
+                return
         os.startfile(t)
     except Exception as e:
         messagebox.showerror(APP_NAME, "Could not open:\n{}\n\n{}".format(t, e))
